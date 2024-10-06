@@ -1,0 +1,3 @@
+[submodule "MACVO_ROS2/src"]
+	path = MACVO_ROS2/src
+	url = git@github.com:MAC-VO/MAC-VO.git
