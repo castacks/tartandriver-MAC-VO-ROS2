@@ -1,4 +1,5 @@
 import rclpy
+import torch
 import numpy as np
 import pypose as pp
 
@@ -8,7 +9,22 @@ from geometry_msgs.msg import PoseStamped
 from std_msgs.msg import Header
 from message_filters import ApproximateTimeSynchronizer, Subscriber
 
-import torch
+from pathlib import Path
+from typing import TYPE_CHECKING
+import os, sys
+
+# Add the src directory to the Python path
+src_path = os.path.abspath(os.path.join(os.path.dirname(__file__), 'src'))
+sys.path.insert(0, src_path)
+if TYPE_CHECKING:
+    from src.Odometry.MACVO import MACVO
+    from src.DataLoader import SourceDataFrame, MetaInfo
+    from src.Utility.Config import load_config
+else:
+    from Odometry.MACVO import MACVO                
+    from DataLoader import SourceDataFrame, MetaInfo
+    from Utility.Config import load_config          
+
 
 class MACVONode(Node):
     _name_to_dtypes = {
@@ -64,7 +80,7 @@ class MACVONode(Node):
         "64FC4":   (np.float64, 4)
     }
 
-    def __init__(self, imageL_topic: str, imageR_topic: str, pose_topic: str):
+    def __init__(self, imageL_topic: str, imageR_topic: str, pose_topic: str, MACVO_config: str):
         super().__init__("macvo")
         self.imageL_sub = Subscriber(self, Image, imageL_topic)
         self.imageR_sub = Subscriber(self, Image, imageR_topic)
@@ -77,6 +93,12 @@ class MACVONode(Node):
         self.pose_pipe  = self.create_publisher(
             PoseStamped, pose_topic, qos_profile=10
         )
+        
+        cfg, _ = load_config(Path(MACVO_config))
+        self.frame_idx  = 0
+        self.camera     = cfg.Camera
+        self.odometry   = MACVO.from_config(cfg, None)
+        print(self.odometry)
     
     @staticmethod
     def ros2_image_to_numpy(msg: Image) -> np.ndarray:
@@ -101,6 +123,24 @@ class MACVONode(Node):
         # Receive image
         pose = pp.identity_SE3()
         
+        meta=MetaInfo(
+            idx=self.frame_idx,
+            baseline=self.camera.bl,
+            width=self.camera.width,
+            height=self.camera.height,
+            K=torch.tensor([[self.camera.fx, 0., self.camera.cx],
+                            [0., self.camera.fy, self.camera.cy],
+                            [0., 0., 1.]])
+        )
+        frame = SourceDataFrame(
+            meta=meta,
+            imageL=torch.tensor(imageL).float() / 255.,
+            imageR=torch.tensor(imageR).float() / 255.,
+            imu=None,
+            gtFlow=None, gtDepth=None, gtPose=None, flowMask=None
+        )
+        self.odometry.run(frame)
+        
         # Return pose
         out_msg = PoseStamped()
         out_msg.header = Header()
@@ -116,16 +156,19 @@ class MACVONode(Node):
         out_msg.pose.orientation.z = pose[5].item()
         out_msg.pose.orientation.w = pose[6].item()
         
+        self.frame_idx += 1
         self.pose_pipe.publish(out_msg)
 
 
 def main():
     rclpy.init()
+    config = "./config/config.yaml"
     
     node = MACVONode(
         imageL_topic="/zed/zed_node/rgb/image_rect_color",
         imageR_topic="/zed/zed_node/right/image_rect_color",
-        pose_topic="/macvo/pose"
+        pose_topic="/macvo/pose",
+        MACVO_config=str(Path(Path(__file__).parent, config))
     )
     print('MACVO Node created.')
     
