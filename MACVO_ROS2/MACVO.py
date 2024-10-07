@@ -81,8 +81,8 @@ class MACVONode(Node):
 
     def __init__(self, imageL_topic: str, imageR_topic: str, pose_topic: str, MACVO_config: str):
         super().__init__("macvo")
-        self.imageL_sub = Subscriber(self, Image, imageL_topic, queue_size=2)
-        self.imageR_sub = Subscriber(self, Image, imageR_topic, queue_size=2)
+        self.imageL_sub = Subscriber(self, Image, imageL_topic, qos_profile=2)
+        self.imageR_sub = Subscriber(self, Image, imageR_topic, qos_profile=2)
         
         self.sync_stereo = ApproximateTimeSynchronizer(
             [self.imageL_sub, self.imageR_sub], queue_size=2, slop=0.1
@@ -117,7 +117,7 @@ class MACVONode(Node):
         return data
     
     def publish_last_pose(self, system: MACVO):
-        pose = system.gmap.frames.pose[-1] if len(system.gmap.frames) == 1 else system.gmap.frames.pose[-2]
+        pose = system.gmap.frames.pose[-1]
         
         out_msg                 = PoseStamped()
         out_msg.header          = Header()
