@@ -9,3 +9,7 @@ This ros embeding use the `ROS-2` branch of the `MAC-SLAM`
 git submodule set-branch -b ROS-2 src/MACVO_ROS2
 git submodule update --init --remote src/MACVO_ROS2
 ```
+
+## Pretrained Model
+
+Please follow the https://github.com/MAC-VO/MAC-VO to download the pre-trained model. The default path for the pre-trained model are in `MACVO_ROS2/src/Module`
