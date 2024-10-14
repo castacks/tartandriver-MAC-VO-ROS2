@@ -1,4 +1,3 @@
-source .venv/bin/activate        # Initialize virtual envrionment
 colcon build
 source install/local_setup.bash
 
