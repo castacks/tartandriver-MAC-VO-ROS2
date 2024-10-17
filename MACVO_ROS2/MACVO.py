@@ -9,6 +9,7 @@ from message_filters import ApproximateTimeSynchronizer, Subscriber
 from pathlib import Path
 from typing import TYPE_CHECKING
 import os, sys
+import argparse
 
 from .MessageFactory import to_stamped_pose, from_image, to_pointcloud
 
@@ -119,14 +120,16 @@ class MACVONode(Node):
 def main():
     # PLTVisualizer.setup(state=PLTVisualizer.State.SAVE_FILE, save_path=Path("/home/yutian/ros2_ws/.output"))
     rclpy.init()
-    config = "./config/config.yaml"
+    args = argparse.ArgumentParser()
+    args.add_argument("--config", type=str, default="./config/config.yaml")
+    args = args.parse_args()
     
     node = MACVONode(
         imageL_topic="/zed/zed_node/rgb/image_rect_color",
         imageR_topic="/zed/zed_node/right/image_rect_color",
         pose_topic="/macvo/pose",
         point_topic="/macvo/map",
-        MACVO_config=str(Path(Path(__file__).parent, config))
+        MACVO_config=str(Path(Path(__file__).parent, args.config))
     )
     print('MACVO Node created.')
     
