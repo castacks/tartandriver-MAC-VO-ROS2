@@ -6,8 +6,8 @@ This repo support ros2_humble, you may check the robostack: https://robostack.gi
 This ros embeding use the `ROS-2` branch of the `MAC-SLAM`
 
 ```
-git submodule set-branch -b ROS-2 src/MACVO_ROS2
-git submodule update --init --remote src/MACVO_ROS2
+git submodule set-branch -b ROS-2 MACVO_ROS2/src
+git submodule update --init --remote MACVO_ROS2/src
 ```
 
 ## Pretrained Model
