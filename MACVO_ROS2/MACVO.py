@@ -83,6 +83,7 @@ class MACVONode(Node):
             position  = latest_points.position,
             keypoints = latest_obs.pixel_uv,
             frame_id  = frame,
+            colors    = latest_points.color,
             time      = time
         )
         self.point_pipe.publish(out_msg)

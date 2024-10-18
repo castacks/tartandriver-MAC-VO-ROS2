@@ -44,7 +44,7 @@ Odometry:
     type: FlowFormerCovFrontend
     args:
       device: *device
-      weight: MACVO_ROS2/src/Model/MACVO_FrontendCov.pth
+      weight: /home/yutian/ros2_ws/MACVO_ROS2/MACVO_ROS2/Model/MACVO_FrontendCov.pth
       use_jit: true
       enforce_positive_disparity: false
       dtype: fp32
@@ -52,7 +52,7 @@ Odometry:
   motion:
     type: TartanMotionNet
     args:
-      weight: MACVO_ROS2/src/Model/MACVO_posenet.pkl
+      weight: /home/yutian/ros2_ws/MACVO_ROS2/MACVO_ROS2/Model/MACVO_posenet.pkl
       device: *device
 
   outlier:
@@ -84,11 +84,11 @@ Odometry:
       parallel: true
 
 Camera:
-  fx: 732.53857421875
-  fy: 732.53857421875
-  cx: 982.9462280273438
-  cy: 660.4545288085938
+  fx: 735.9240
+  fy: 735.7140
+  cx: 964.8520
+  cy: 622.2050
+  bl: 0.119981
 
-  bl: 0.120022
   width: 1920
   height: 1200

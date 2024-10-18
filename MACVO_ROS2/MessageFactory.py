@@ -93,7 +93,7 @@ def from_image(msg: sensor_msgs.Image) -> np.ndarray:
     return data
 
 
-def to_pointcloud(position: torch.Tensor, keypoints: torch.Tensor, frame_id: str, time: Time) -> sensor_msgs.PointCloud:
+def to_pointcloud(position: torch.Tensor, keypoints: torch.Tensor, colors: torch.Tensor, frame_id: str, time: Time) -> sensor_msgs.PointCloud:
     """
     position    should be a Nx3 pytorch Tensor (dtype=float)
     keypoints   should be a Nx2 pytorch Tensor (dtype=float)
@@ -103,6 +103,7 @@ def to_pointcloud(position: torch.Tensor, keypoints: torch.Tensor, frame_id: str
     out_msg     = sensor_msgs.PointCloud()
     position_   = position.detach().cpu().numpy()
     keypoints_  = keypoints.detach().cpu().numpy()
+    colors_      = colors.detach().cpu().numpy()
     
     out_msg.header = std_msgs.Header()
     out_msg.header.stamp    = time
@@ -119,6 +120,13 @@ def to_pointcloud(position: torch.Tensor, keypoints: torch.Tensor, frame_id: str
         sensor_msgs.ChannelFloat32(
             name="kp_v", values=keypoints_[..., 1].tolist()
         ),
+        sensor_msgs.ChannelFloat32(
+            name="rgb" , values=(
+                colors_[..., 0].astype(np.uint32)       | 
+                colors_[..., 1].astype(np.uint32) << 8  | 
+                colors_[..., 2].astype(np.uint32) << 16
+            )
+        )
     ]
     
     return out_msg
