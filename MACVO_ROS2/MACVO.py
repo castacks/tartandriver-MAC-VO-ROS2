@@ -32,8 +32,8 @@ else:
 class MACVONode(Node):
     def __init__(self, imageL_topic: str, imageR_topic: str, pose_topic: str, MACVO_config: str, point_topic: str | None = None):
         super().__init__("macvo")
-        self.imageL_sub = Subscriber(self, Image, imageL_topic, qos_profile=10)
-        self.imageR_sub = Subscriber(self, Image, imageR_topic, qos_profile=10)
+        self.imageL_sub = Subscriber(self, Image, imageL_topic, qos_profile=1)
+        self.imageR_sub = Subscriber(self, Image, imageR_topic, qos_profile=1)
         
         self.sync_stereo = ApproximateTimeSynchronizer(
             [self.imageL_sub, self.imageR_sub], queue_size=2, slop=0.1
@@ -112,7 +112,7 @@ class MACVONode(Node):
             imageR=torch.tensor(imageR)[..., :3].float().permute(2, 0, 1).unsqueeze(0) / 255.,
             imu=None,
             gtFlow=None, gtDepth=None, gtPose=None, flowMask=None
-        ).resize_image(scale_u=3, scale_v=2.5)
+        ).resize_image(scale_u=6, scale_v=5)
         
         self.odometry.run(frame)
         self.frame_idx += 1
@@ -122,7 +122,7 @@ def main():
     # PLTVisualizer.setup(state=PLTVisualizer.State.SAVE_FILE, save_path=Path("/home/yutian/ros2_ws/.output"))
     rclpy.init()
     args = argparse.ArgumentParser()
-    args.add_argument("--config", type=str, default="./config/config.yaml")
+    args.add_argument("--config", type=str, default="./config/ZedConfig.yaml")
     args = args.parse_args()
     
     node = MACVONode(

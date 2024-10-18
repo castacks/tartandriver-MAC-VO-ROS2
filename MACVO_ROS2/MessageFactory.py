@@ -121,11 +121,13 @@ def to_pointcloud(position: torch.Tensor, keypoints: torch.Tensor, colors: torch
             name="kp_v", values=keypoints_[..., 1].tolist()
         ),
         sensor_msgs.ChannelFloat32(
-            name="rgb" , values=(
-                colors_[..., 0].astype(np.uint32)       | 
-                colors_[..., 1].astype(np.uint32) << 8  | 
-                colors_[..., 2].astype(np.uint32) << 16
-            )
+            name="r" , values=colors_[..., 0].tolist()
+        ),
+        sensor_msgs.ChannelFloat32(
+            name="g" , values=colors_[..., 1].tolist()
+        ),
+        sensor_msgs.ChannelFloat32(
+            name="b" , values=colors_[..., 2].tolist()
         )
     ]
     
