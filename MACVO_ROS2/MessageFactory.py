@@ -3,6 +3,7 @@ import sensor_msgs.msg as sensor_msgs
 import geometry_msgs.msg as geometry_msgs
 from builtin_interfaces.msg import Time
 
+import sys
 import torch
 import pypose as pp
 import numpy as np
@@ -91,6 +92,44 @@ def from_image(msg: sensor_msgs.Image) -> np.ndarray:
     data = np.frombuffer(msg.data, dtype=dtype).reshape(shape)
     data.strides = (msg.step, dtype.itemsize * channel, dtype.itemsize)
     return data
+
+
+def to_image(arr: np.ndarray, encoding: str = "bgra8") -> sensor_msgs.Image:
+    if not encoding in _name_to_dtypes:
+        raise TypeError('Unrecognized encoding {}'.format(encoding))
+
+    im = sensor_msgs.Image(encoding=encoding)
+
+    # extract width, height, and channels
+    dtype_class, exp_channels = _name_to_dtypes[encoding]
+    dtype = np.dtype(dtype_class)
+    if len(arr.shape) == 2:
+        im.height, im.width, channels = arr.shape + (1,)
+    elif len(arr.shape) == 3:
+        im.height, im.width, channels = arr.shape
+    else:
+        raise TypeError("Array must be two or three dimensional")
+
+    # check type and channels
+    if exp_channels != channels:
+        raise TypeError("Array has {} channels, {} requires {}".format(
+            channels, encoding, exp_channels
+        ))
+    if dtype_class != arr.dtype.type:
+        raise TypeError("Array is {}, {} requires {}".format(
+            arr.dtype.type, encoding, dtype_class
+        ))
+
+    # make the array contiguous in memory, as mostly required by the format
+    contig = np.ascontiguousarray(arr)
+    im.data = contig.tobytes()
+    im.step = contig.strides[0]
+    im.is_bigendian = (
+        arr.dtype.byteorder == '>' or
+        arr.dtype.byteorder == '=' and sys.byteorder == 'big'
+    )
+
+    return im
 
 
 def to_pointcloud(position: torch.Tensor, keypoints: torch.Tensor, colors: torch.Tensor, frame_id: str, time: Time) -> sensor_msgs.PointCloud:
