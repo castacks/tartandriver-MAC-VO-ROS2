@@ -50,10 +50,8 @@ Odometry:
       dtype: fp32
 
   motion:
-    type: TartanMotionNet
+    type: StaticMotionModel
     args:
-      weight: MACVO_ROS2/src/Model/MACVO_posenet.pkl
-      device: *device
 
   outlier:
     type: FilterCompose
