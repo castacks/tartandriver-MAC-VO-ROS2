@@ -109,10 +109,13 @@ class MACVONode(Node):
         
         source = system.prev_frame
         if source is None: return
+        frame = self.frame
+        time  = self.time if self.prev_time is None else self.prev_time
+        assert frame is not None and time is not None
         
         msg: Image = to_image(
             (center_crop(source.imageL[0].clone(), [224, 224]).permute(1, 2, 0).numpy() * 255).astype(np.uint8),
-            encoding="bgr8"
+            encoding="bgr8", frame_id=frame, time=time
         )
         self.img_pipes.publish(msg)
         
@@ -161,7 +164,7 @@ def main():
         pose_topic  ="/macvo/pose",
         point_topic ="/macvo/map",
         img_stream  ="/macvo/img",
-        MACVO_config=str(Path(Path(__file__).parent, args.config))
+        MACVO_config=str(Path(args.config))
     )
     print('MACVO Node created.')
     

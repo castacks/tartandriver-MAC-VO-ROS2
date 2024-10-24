@@ -94,7 +94,7 @@ def from_image(msg: sensor_msgs.Image) -> np.ndarray:
     return data
 
 
-def to_image(arr: np.ndarray, encoding: str = "bgra8") -> sensor_msgs.Image:
+def to_image(arr: np.ndarray, frame_id: str, time: Time, encoding: str = "bgra8") -> sensor_msgs.Image:
     if not encoding in _name_to_dtypes:
         raise TypeError('Unrecognized encoding {}'.format(encoding))
 
@@ -124,6 +124,8 @@ def to_image(arr: np.ndarray, encoding: str = "bgra8") -> sensor_msgs.Image:
     contig = np.ascontiguousarray(arr)
     im.data = contig.tobytes()
     im.step = contig.strides[0]
+    im.header.stamp    = time
+    im.header.frame_id = frame_id
     im.is_bigendian = (
         arr.dtype.byteorder == '>' or
         arr.dtype.byteorder == '=' and sys.byteorder == 'big'
