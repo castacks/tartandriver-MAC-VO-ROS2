@@ -31,32 +31,54 @@ Odometry:
         min_flow_cov: 0.25
 
   keypoint:
-    type: CovAwareSelector
+    type: CovAwareSelector_NoDepth
     args:
       device: *device
-      kernel_size: 7
-      mask_width: 32
-      max_depth: *max_depth
-      max_depth_cov: 250.0
+      kernel_size: 3
+      mask_width: 16
       max_match_cov: 100.0
-
+  
   frontend:
-    type: FlowFormerCovFrontend
+    type: UniMatchCovFrontend
     args:
+      weight: /home/airlab/workspace/MAC-SLAM-ROS2/MACVO_ROS2/src/Model/UniMatch/scale2.pth
       device: *device
-      weight: /home/airlab/workspace/MAC-SLAM-ROS2/build/MACVO_ROS2/build/lib/MACVO_ROS2/src/Model/MACVO_FrontendCov.pth
-      use_jit: true
-      enforce_positive_disparity: false
-      dtype: fp32
+      dtype : fp32
+      model :
+          task: flow
+          num_refine: 0
+
+          num_scales: 1
+          feature_channels: 128
+          upsample_factor: 8
+          num_head: 1
+          ffn_dim_expansion: 4
+          num_transformer_layer: 6
+          attn_type: swin
+
+          attn_splits_list: [2]
+          corr_radius_list: [-1]
+          prop_radius_list: [-1]
+
+          cov_model: "FormerCovHead"
+
+  # frontend:
+  #   type: FlowFormerCovFrontend
+  #   args:
+  #     device: *device
+  #     weight: /home/airlab/workspace/MAC-SLAM-ROS2/build/MACVO_ROS2/build/lib/MACVO_ROS2/src/Model/MACVO_FrontendCov.pth
+  #     use_jit: true
+  #     enforce_positive_disparity: false
+  #     dtype: fp32
 
   motion:
     type: StaticMotionModel
     args:
 
-
   outlier:
     type: FilterCompose
     args:
+      verbose: false
       filter_args:
         - type: CovarianceSanityFilter
           args:

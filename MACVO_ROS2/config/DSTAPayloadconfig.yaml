@@ -44,7 +44,7 @@ Odometry:
     type: FlowFormerCovFrontend
     args:
       device: *device
-      weight: MACVO_ROS2/src/Model/MACVO_FrontendCov.pth
+      weight: /home/airlab/workspace/MAC-SLAM-ROS2/build/MACVO_ROS2/build/lib/MACVO_ROS2/src/Model/MACVO_FrontendCov.pth
       use_jit: true
       enforce_positive_disparity: false
       dtype: fp32
@@ -52,7 +52,7 @@ Odometry:
   motion:
     type: TartanMotionNet
     args:
-      weight: MACVO_ROS2/src/Model/MACVO_posenet.pkl
+      weight: /home/airlab/workspace/MAC-SLAM-ROS2/build/MACVO_ROS2/build/lib/MACVO_ROS2/src/Model/MACVO_posenet.pkl
       device: *device
 
   outlier:

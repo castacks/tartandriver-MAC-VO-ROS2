@@ -94,7 +94,7 @@ class MACVONode(Node):
         self.frame        = msg_L.header.frame_id
         imageL, self.time = from_image(msg_L), msg_L.header.stamp
         imageR            = from_image(msg_R)
-        self.get_logger().info(f"Receive: Left={imageL.shape}, Right={imageR.shape}, time={self.time}, frame={self.frame}")
+        self.get_logger().info(f"{self.odometry.gmap}")
         
         # Receive image
         meta=MetaInfo(
@@ -112,7 +112,7 @@ class MACVONode(Node):
             imageR=torch.tensor(imageR)[..., :3].float().permute(2, 0, 1).unsqueeze(0) / 255.,
             imu=None,
             gtFlow=None, gtDepth=None, gtPose=None, flowMask=None
-        ).resize_image(scale_u=6, scale_v=5)
+        ).resize_image(scale_u=5, scale_v=4)
         
         self.odometry.run(frame)
         self.frame_idx += 1
@@ -122,7 +122,7 @@ def main():
     # PLTVisualizer.setup(state=PLTVisualizer.State.SAVE_FILE, save_path=Path("/home/yutian/ros2_ws/.output"))
     rclpy.init()
     args = argparse.ArgumentParser()
-    args.add_argument("--config", type=str, default="./config/ZedConfig.yaml")
+    args.add_argument("--config", type=str, default="./config/ZedConfig_gmflow.yaml")
     args = args.parse_args()
     
     node = MACVONode(
