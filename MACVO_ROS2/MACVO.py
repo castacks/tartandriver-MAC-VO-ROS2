@@ -1,5 +1,6 @@
 import rclpy
 import torch
+import numpy as np
 
 from rclpy.node import Node
 from sensor_msgs.msg import Image, PointCloud
@@ -8,10 +9,11 @@ from message_filters import ApproximateTimeSynchronizer, Subscriber
 
 from pathlib import Path
 from typing import TYPE_CHECKING
+from torchvision.transforms.functional import center_crop
 import os, sys
 import argparse
 
-from .MessageFactory import to_stamped_pose, from_image, to_pointcloud
+from .MessageFactory import to_stamped_pose, from_image, to_pointcloud, to_image
 
 # Add the src directory to the Python path
 src_path = os.path.abspath(os.path.join(os.path.dirname(__file__), 'src'))
@@ -30,7 +32,15 @@ else:
 
 
 class MACVONode(Node):
-    def __init__(self, imageL_topic: str, imageR_topic: str, pose_topic: str, MACVO_config: str, point_topic: str | None = None):
+    def __init__(
+        self,
+        imageL_topic: str,
+        imageR_topic: str,
+        pose_topic: str,
+        MACVO_config: str,
+        point_topic: str | None = None,
+        img_stream: str | None = None,
+    ):
         super().__init__("macvo")
         self.imageL_sub = Subscriber(self, Image, imageL_topic, qos_profile=1)
         self.imageR_sub = Subscriber(self, Image, imageR_topic, qos_profile=1)
@@ -47,18 +57,24 @@ class MACVONode(Node):
         else:
             self.point_pipe = None
         
+        if img_stream is not None:
+            self.img_pipes = self.create_publisher(Image, img_stream, qos_profile=1)
+        else:
+            self.img_pipes = None
+        
         cfg, _ = load_config(Path(MACVO_config))
         self.frame_idx  = 0
         self.camera     = cfg.Camera
         self.odometry   = MACVO.from_config(cfg)
         
-        self.odometry.register_on_optimize_finish(self.publish_lastest_pose)
+        self.odometry.register_on_optimize_finish(self.publish_latest_pose)
         self.odometry.register_on_optimize_finish(self.publish_latest_points)
+        self.odometry.register_on_optimize_finish(self.publish_latest_stereo)
         
         self.time  , self.prev_time  = None, None
         self.frame = "zed_lcam_initial_pose"
     
-    def publish_lastest_pose(self, system: MACVO):
+    def publish_latest_pose(self, system: MACVO):
         pose = system.gmap.frames.pose[-1]
         frame = self.frame
         time  = self.time if self.prev_time is None else self.prev_time
@@ -87,6 +103,19 @@ class MACVONode(Node):
             time      = time
         )
         self.point_pipe.publish(out_msg)
+  
+    def publish_latest_stereo(self, system: MACVO):
+        if self.img_pipes is None: return
+        
+        source = system.prev_frame
+        if source is None: return
+        
+        msg: Image = to_image(
+            (center_crop(source.imageL[0].clone(), [224, 224]).permute(1, 2, 0).numpy() * 255).astype(np.uint8),
+            encoding="bgr8"
+        )
+        self.img_pipes.publish(msg)
+        
         
     def receive_frame(self, msg_L: Image, msg_R: Image) -> None:
         self.prev_frame, self.prev_time = self.frame, self.time
@@ -128,8 +157,9 @@ def main():
     node = MACVONode(
         imageL_topic="/zed/zed_node/rgb/image_rect_color",
         imageR_topic="/zed/zed_node/right/image_rect_color",
-        pose_topic="/macvo/pose",
-        point_topic="/macvo/map",
+        pose_topic  ="/macvo/pose",
+        point_topic ="/macvo/map",
+        img_stream  ="/macvo/img",
         MACVO_config=str(Path(Path(__file__).parent, args.config))
     )
     print('MACVO Node created.')
