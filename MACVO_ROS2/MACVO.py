@@ -141,7 +141,7 @@ class MACVONode(Node):
             imageR=torch.tensor(imageR)[..., :3].float().permute(2, 0, 1).unsqueeze(0) / 255.,
             imu=None,
             gtFlow=None, gtDepth=None, gtPose=None, flowMask=None
-        ).resize_image(scale_u=5, scale_v=4)
+        ).resize_image(scale_u=3.5, scale_v=3)
         
         self.odometry.run(frame)
         self.frame_idx += 1
@@ -151,11 +151,11 @@ def main():
     # PLTVisualizer.setup(state=PLTVisualizer.State.SAVE_FILE, save_path=Path("/home/yutian/ros2_ws/.output"))
     rclpy.init()
     args = argparse.ArgumentParser()
-    args.add_argument("--config", type=str, default="./config/ZedConfig_gmflow.yaml")
+    args.add_argument("--config", type=str, default="./config/ZedConfig.yaml")
     args = args.parse_args()
     
     node = MACVONode(
-        imageL_topic="/zed/zed_node/rgb/image_rect_color",
+        imageL_topic="/zed/zed_node/left/image_rect_color",
         imageR_topic="/zed/zed_node/right/image_rect_color",
         pose_topic  ="/macvo/pose",
         point_topic ="/macvo/map",
