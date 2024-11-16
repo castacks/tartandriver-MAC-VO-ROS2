@@ -90,3 +90,6 @@ Camera:
 
   width: 1920
   height: 1200
+
+  scale_u: 3
+  scale_v: 4

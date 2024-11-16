@@ -9,7 +9,7 @@ from message_filters import ApproximateTimeSynchronizer, Subscriber
 
 from pathlib import Path
 from typing import TYPE_CHECKING
-from torchvision.transforms.functional import center_crop
+from torchvision.transforms.functional import center_crop, resize
 import os, sys
 import argparse
 
@@ -73,6 +73,8 @@ class MACVONode(Node):
         
         self.time  , self.prev_time  = None, None
         self.frame = "zed_lcam_initial_pose"
+        self.scale_u = cfg.scale_u if cfg.scale_u is not None else 1
+        self.scale_v = cfg.scale_v if cfg.scale_v is not None else 1
     
     def publish_latest_pose(self, system: MACVO):
         pose = system.gmap.frames.pose[-1]
@@ -114,7 +116,7 @@ class MACVONode(Node):
         assert frame is not None and time is not None
         
         msg: Image = to_image(
-            (center_crop(source.imageL[0].clone(), [224, 224]).permute(1, 2, 0).numpy() * 255).astype(np.uint8),
+            (resize(img = source.imageL[0].clone(), size = [320, 240]).permute(1, 2, 0).numpy() * 255).astype(np.uint8),
             encoding="bgr8", frame_id=frame, time=time
         )
         self.img_pipes.publish(msg)
@@ -144,8 +146,7 @@ class MACVONode(Node):
                 imageR=torch.tensor(imageR)[..., :3].float().permute(2, 0, 1).unsqueeze(0) / 255.,
                 imu=None,
                 gtFlow=None, gtDepth=None, gtPose=None, flowMask=None
-            )\
-            .scale_image(scale_u=6, scale_v=5)
+            ).scale_image(scale_u=self.scale_u, scale_v=self.scale_v)
         
         self.odometry.run(frame)
         self.frame_idx += 1
