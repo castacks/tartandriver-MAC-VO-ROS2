@@ -23,12 +23,10 @@ if TYPE_CHECKING:
     from src.Odometry.MACVO import MACVO
     from src.DataLoader import SourceDataFrame, MetaInfo
     from src.Utility.Config import load_config
-    from src.Utility.Visualizer import PLTVisualizer
 else:
     from Odometry.MACVO import MACVO                
     from DataLoader import SourceDataFrame, MetaInfo
     from Utility.Config import load_config
-    from Utility.Visualizer import PLTVisualizer
 
 
 class MACVONode(Node):
@@ -148,12 +146,12 @@ class MACVONode(Node):
 
 
 def main():
-    # PLTVisualizer.setup(state=PLTVisualizer.State.SAVE_FILE, save_path=Path("/home/yutian/ros2_ws/.output"))
     rclpy.init()
     args = argparse.ArgumentParser()
     args.add_argument("--config", type=str, default="./config/ZedConfig.yaml")
     args = args.parse_args()
     
+    # Create Node and start running
     node = MACVONode(
         imageL_topic="/zed/zed_node/left/image_rect_color",
         imageR_topic="/zed/zed_node/right/image_rect_color",
@@ -163,8 +161,8 @@ def main():
         MACVO_config=str(Path(Path(__file__).parent, args.config))
     )
     print('MACVO Node created.')
-    
     rclpy.spin(node)
+    # End
     
     node.destroy_node()
     rclpy.shutdown()
