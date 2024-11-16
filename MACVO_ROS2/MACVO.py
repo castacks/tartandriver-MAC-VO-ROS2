@@ -71,8 +71,8 @@ class MACVONode(Node):
         
         self.time  , self.prev_time  = None, None
         self.frame = "zed_lcam_initial_pose"
-        self.scale_u = cfg.scale_u if cfg.scale_u is not None else 1
-        self.scale_v = cfg.scale_v if cfg.scale_v is not None else 1
+        self.scale_u = self.camera.scale_u if self.camera.scale_u is not None else 1
+        self.scale_v = self.camera.scale_v if self.camera.scale_v is not None else 1
     
     def publish_latest_pose(self, system: MACVO):
         pose = system.gmap.frames.pose[-1]
