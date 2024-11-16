@@ -53,6 +53,7 @@ Odometry:
     type: StaticMotionModel
     args:
 
+
   outlier:
     type: FilterCompose
     args:
@@ -82,11 +83,11 @@ Odometry:
       parallel: true
 
 Camera:
-  fx: 735.9240
-  fy: 735.7140
-  cx: 964.8520
-  cy: 622.2050
-  bl: 0.119981
+  fx: 732.527587890625
+  fy: 732.527587890625
+  cx: 982.960693359375
+  cy: 660.4515991210938
+  bl: 0.120022
 
   width: 1920
   height: 1200

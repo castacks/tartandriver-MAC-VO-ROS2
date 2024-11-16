@@ -23,12 +23,10 @@ if TYPE_CHECKING:
     from src.Odometry.MACVO import MACVO
     from src.DataLoader import SourceDataFrame, MetaInfo
     from src.Utility.Config import load_config
-    from src.Utility.Visualizer import PLTVisualizer
 else:
     from Odometry.MACVO import MACVO                
     from DataLoader import SourceDataFrame, MetaInfo
     from Utility.Config import load_config
-    from Utility.Visualizer import PLTVisualizer
 
 
 class MACVONode(Node):
@@ -128,7 +126,7 @@ class MACVONode(Node):
         self.frame        = msg_L.header.frame_id
         imageL, self.time = from_image(msg_L), msg_L.header.stamp
         imageR            = from_image(msg_R)
-        self.get_logger().info(f"Receive: Left={imageL.shape}, Right={imageR.shape}, time={self.time}, frame={self.frame}")
+        self.get_logger().info(f"{self.odometry.gmap}")
         
         # Receive image
         meta=MetaInfo(
@@ -153,14 +151,14 @@ class MACVONode(Node):
 
 
 def main():
-    # PLTVisualizer.setup(state=PLTVisualizer.State.SAVE_FILE, save_path=Path("/home/yutian/ros2_ws/.output"))
     rclpy.init()
     args = argparse.ArgumentParser()
     args.add_argument("--config", type=str, default="./config/ZedConfig.yaml")
     args = args.parse_args()
     
+    # Create Node and start running
     node = MACVONode(
-        imageL_topic="/zed/zed_node/rgb/image_rect_color",
+        imageL_topic="/zed/zed_node/left/image_rect_color",
         imageR_topic="/zed/zed_node/right/image_rect_color",
         pose_topic  ="/macvo/pose",
         point_topic ="/macvo/map",
@@ -168,8 +166,8 @@ def main():
         MACVO_config=str(Path(args.config))
     )
     print('MACVO Node created.')
-    
     rclpy.spin(node)
+    # End
     
     node.destroy_node()
     rclpy.shutdown()
