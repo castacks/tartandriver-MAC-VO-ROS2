@@ -20,15 +20,6 @@ To launch the MAC-VO Node, use the following config, substitute `[PATH_TO_CONFIG
 ros2 run MACVO_ROS2 MACVO --config [PATH_TO_CONFIG]
 ```
 
-
-## Submodules
-This ros embeding use the `ROS-2` branch of the `MAC-SLAM`
-
-```
-git submodule set-branch -b ROS-2 MACVO_ROS2/src
-git submodule update --init --remote MACVO_ROS2/src
-```
-
 ## Pretrained Model
 
 Please follow the `README.md` on [https://github.com/MAC-VO/MAC-VO](https://github.com/MAC-VO/MAC-VO) to download the pre-trained model. The default path for the pre-trained model is set to be `MACVO_ROS2/src/Module`
