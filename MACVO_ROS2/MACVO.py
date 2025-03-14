@@ -1,6 +1,5 @@
 import rclpy
 import torch
-import numpy as np
 import pypose as pp
 
 from rclpy.node import Node
@@ -27,12 +26,14 @@ if TYPE_CHECKING:
     from src.DataLoader import StereoFrame, StereoData, SmartResizeFrame
     from src.Utility.Config import load_config
     from src.Utility.PrettyPrint import Logger
+    from src.Utility.Timer import Timer
 else:
     import DataLoader
     from Odometry.MACVO import MACVO                
     from DataLoader import StereoFrame, StereoData, SmartResizeFrame
     from Utility.Config import load_config
     from Utility.PrettyPrint import Logger
+    from Utility.Timer import Timer
 
 PACKAGE_NAME = "MACVO_ROS2"
 
@@ -147,7 +148,12 @@ def main():
     rclpy.init()
     args = argparse.ArgumentParser()
     args.add_argument("--config", type=str, default="./config/ZedConfig.yaml")
+    args.add_argument("--timing", action="store_true", help="Record timing for system (active Utility.Timer for global time recording)")
     args = args.parse_args()
+    
+    # Optional - setup Timer to see profiling result
+    Timer.setup(active=args.timing)
+    # Optional End
     
     # Create Node and start running
     node = MACVONode(
