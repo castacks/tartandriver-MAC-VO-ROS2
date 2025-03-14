@@ -1,9 +1,10 @@
 Common:
   # Some configurations are shared across multiple modules in Odometry, so I write them here.
   device: &device cuda
+  max_depth: &max_depth auto
 
 Odometry:
-  name: MACVO_Mapping
+  name: MACVO_Jetson
   args:
     # Device directive to the VO system
     # NOTE: the system may not follow this device config strictly since some module
@@ -19,7 +20,6 @@ Odometry:
     # Profiling the system using torch, generate chrome json trace file.
     profile: false
 
-    # Mapping mode provides the dense mapping
     mapping: false
 
   cov:
@@ -33,16 +33,16 @@ Odometry:
         min_flow_cov: 0.25
 
   keypoint:
-    type: CovAwareSelector_NoDepth
+    type: CovAwareSelector
     args:
       device: *device
       kernel_size: 7
       mask_width: 32
+      max_depth: *max_depth
+      max_depth_cov: 250.0
       max_match_cov: 100.0
-
+  
   mappoint:
-    # Mapping feature can be conveniently turn off by using 
-    # "type: NoKeypointSelector" instead of the config below.
     type: MappingPointSelector
     args:
       device: *device
@@ -54,7 +54,7 @@ Odometry:
     type: CUDAGraph_FlowFormerCovFrontend
     args:
       device: *device
-      weight: model/MACVO_FrontendCov.pth
+      weight: ./model/MACVO_FrontendCov.pth
       dtype: fp32
       max_flow: -1
       enforce_positive_disparity: false
@@ -64,8 +64,17 @@ Odometry:
     args:
 
   outlier:
-    type: CovarianceSanityFilter
+    type: FilterCompose
     args:
+      filter_args:
+        - type: CovarianceSanityFilter
+          args:
+        - type: SimpleDepthFilter
+          args:
+            min_depth: 0.05
+            max_depth: *max_depth
+        - type: LikelyFrontOfCamFilter
+          args:
   
   postprocess:
     type: MotionInterpolate
@@ -76,20 +85,22 @@ Odometry:
     args:
   
   optimizer:
-    type: ReprojectOptimizer
+    type: TwoFramePoseOptimizer
     args:
       device: cpu
       vectorize: true
       parallel: true
-      use_fancy_cov: false
-      constraint: disparity
 
 Camera:
-  fx: 732.527587890625
-  fy: 732.527587890625
-  cx: 982.960693359375
-  cy: 660.4515991210938
+  # NOTE: Since in zedcam_config.yaml we have down-sampled the image by 4, changed
+  # the intrinsic accordingly.
+  # fx: 732.527587890625
+  # fy: 732.527587890625
+  # cx: 982.960693359375
+  # cy: 660.4515991210938
+  fx: 183.1318969727
+  fy: 183.1318969727
+  cx: 245.7401733398
+  cy: 165.1128997803
+  
   bl: 0.120022
-
-  width: 1920
-  height: 1200

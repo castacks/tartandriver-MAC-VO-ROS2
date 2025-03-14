@@ -129,8 +129,8 @@ class MACVONode(Node):
                 ]]),
                 baseline=torch.tensor([self.camera.bl]),
                 time_ns=[timestamp.nanosec],
-                height=self.camera.height,
-                width=self.camera.width,
+                height=imageL.shape[0],
+                width=imageL.shape[1],
                 imageL=torch.tensor(imageL)[..., :3].float().permute(2, 0, 1).unsqueeze(0) / 255.,
                 imageR=torch.tensor(imageR)[..., :3].float().permute(2, 0, 1).unsqueeze(0) / 255.,
             )
