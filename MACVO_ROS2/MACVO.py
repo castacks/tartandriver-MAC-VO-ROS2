@@ -1,17 +1,20 @@
 import rclpy
 import torch
 import numpy as np
+import pypose as pp
 
 from rclpy.node import Node
 from sensor_msgs.msg import Image, PointCloud
 from geometry_msgs.msg import PoseStamped
 from message_filters import ApproximateTimeSynchronizer, Subscriber
+from ament_index_python.packages import get_package_share_directory
+from builtin_interfaces.msg import Time
 
 from pathlib import Path
 from typing import TYPE_CHECKING
-from torchvision.transforms.functional import center_crop, resize
 import os, sys
 import argparse
+import logging
 
 from .MessageFactory import to_stamped_pose, from_image, to_pointcloud, to_image
 
@@ -21,133 +24,118 @@ sys.path.insert(0, src_path)
 if TYPE_CHECKING:
     # To make static type checker happy : )
     from src.Odometry.MACVO import MACVO
-    from src.DataLoader import SourceDataFrame, MetaInfo
+    from src.DataLoader import StereoFrame, StereoData, SmartResizeFrame
     from src.Utility.Config import load_config
+    from src.Utility.PrettyPrint import Logger
 else:
+    import DataLoader
     from Odometry.MACVO import MACVO                
-    from DataLoader import SourceDataFrame, MetaInfo
+    from DataLoader import StereoFrame, StereoData, SmartResizeFrame
     from Utility.Config import load_config
+    from Utility.PrettyPrint import Logger
+
+PACKAGE_NAME = "MACVO_ROS2"
+
+# MAC-VO Node
 
 
 class MACVONode(Node):
     def __init__(
-        self,
-        imageL_topic: str,
-        imageR_topic: str,
-        pose_topic: str,
-        MACVO_config: str,
-        point_topic: str | None = None,
-        img_stream: str | None = None,
-    ):
+        self, config: Path,
+        imageL_subscribe: str,  # Rectified RGB image, expect to receive sensor_msg/image
+        imageR_subscribe: str,  # Rectified RGB image, expect to receive sensor_msg/image
+
+        pose_publish: str,      # Estimated pose of Left camera optical center, NED coordinate, geometry_msg/pose_stamped
+        map_pc_publish: str,    # Dense mapping pointcloud, sensor_msg/pointcloud 
+        imageL_publish: str     # Scaled & cropped RGB image actually received by MAC-VO, sensor_msg/image
+    ) -> None:
         super().__init__("macvo")
-        self.imageL_sub = Subscriber(self, Image, imageL_topic, qos_profile=1)
-        self.imageR_sub = Subscriber(self, Image, imageR_topic, qos_profile=1)
+        self.get_logger().set_level(logging.INFO)
+        self.get_logger().info(f"{os.getcwd()}")
+
+        imageL_recv = Subscriber(self, Image, imageL_subscribe, qos_profile=1)
+        imageR_recv = Subscriber(self, Image, imageR_subscribe, qos_profile=1)
+        self.stereo_recv = ApproximateTimeSynchronizer([imageL_recv, imageR_recv], queue_size=2, slop=0.1)
+        self.stereo_recv.registerCallback(self.receive_stereo)
+
+        self.pose_send = self.create_publisher(PoseStamped, pose_publish, qos_profile=1)
+        self.map_send  = self.create_publisher(PointCloud, map_pc_publish, qos_profile=1)
+        self.img_send  = self.create_publisher(Image, imageL_publish, qos_profile=1)
         
-        self.sync_stereo = ApproximateTimeSynchronizer(
-            [self.imageL_sub, self.imageR_sub], queue_size=2, slop=0.1
+        # Start MAC-VO
+        cfg, _ = load_config(config)
+        self.frame_id, self.camera = 0, cfg.Camera
+        
+        # Load model from the resources directory automatically.
+        original_cwd = os.getcwd()
+        try:
+            os.chdir(get_package_share_directory(PACKAGE_NAME))
+            self.get_logger().info(get_package_share_directory(PACKAGE_NAME))
+            self.odometry = MACVO[StereoFrame].from_config(cfg)
+        finally:
+            os.chdir(original_cwd)
+        # End
+        self.frame_fn = SmartResizeFrame({"height": 320, "width": 320, "interp": "bilinear"})
+        #
+
+        self.odometry.register_on_optimize_finish(self.publish_data)
+        
+        self.time, self.prev_time = None, None
+        self.coord_frame = "zed_lcam_initial_pose"  #FIXME: this is probably wrong?
+        
+
+    def publish_data(self, system: MACVO):
+        # Latest pose
+        pose    = pp.SE3(system.graph.frames.data["pose"][-1])
+        time_ns = int(system.graph.frames.data["time_ns"][-1].item())
+        time = Time()
+        time.sec = time_ns // 1_000_000_000
+        time.nanosec = time_ns % 1_000_000_000
+        pose_msg = to_stamped_pose(pose, self.coord_frame, time)
+        
+        # Latest map
+        points = system.graph.get_frame2map(system.graph.frames[-2:-1])
+        map_pc_msg = to_pointcloud(
+            position  = points.data["pos_Tw"],
+            keypoints = None,
+            frame_id  = self.coord_frame,
+            colors    = points.data["color"],
+            time      = time,
         )
-        self.sync_stereo.registerCallback(self.receive_frame)
+        self.pose_send.publish(pose_msg)
+        self.map_send.publish(map_pc_msg)
+
+    def receive_stereo(self, msg_imageL: Image, msg_imageR: Image) -> None:
+        self.get_logger().info(f"{self.odometry.graph}")
+        imageL, timestamp = from_image(msg_imageL), msg_imageL.header.stamp
+        imageR            = from_image(msg_imageR)
         
-        self.pose_pipe  = self.create_publisher(PoseStamped, pose_topic, qos_profile=1)
-        
-        if point_topic is not None:
-            self.point_pipe = self.create_publisher(PointCloud, point_topic, qos_profile=1)
-        else:
-            self.point_pipe = None
-        
-        if img_stream is not None:
-            self.img_pipes = self.create_publisher(Image, img_stream, qos_profile=1)
-        else:
-            self.img_pipes = None
-        
-        cfg, _ = load_config(Path(MACVO_config))
-        self.frame_idx  = 0
-        self.camera     = cfg.Camera
-        self.odometry   = MACVO.from_config(cfg)
-        
-        self.odometry.register_on_optimize_finish(self.publish_latest_pose)
-        self.odometry.register_on_optimize_finish(self.publish_latest_points)
-        self.odometry.register_on_optimize_finish(self.publish_latest_stereo)
-        
-        self.time  , self.prev_time  = None, None
-        self.frame = "zed_lcam_initial_pose"
-        self.scale_u = self.camera.scale_u if self.camera.scale_u is not None else 1
-        self.scale_v = self.camera.scale_v if self.camera.scale_v is not None else 1
-    
-    def publish_latest_pose(self, system: MACVO):
-        pose = system.gmap.frames.pose[-1]
-        frame = self.frame
-        time  = self.time if self.prev_time is None else self.prev_time
-        assert frame is not None and time is not None
-        
-        out_msg = to_stamped_pose(pose, frame, time)
-        
-        self.pose_pipe.publish(out_msg)
-   
-    def publish_latest_points(self, system: MACVO):
-        if self.point_pipe is None: return
-        
-        latest_frame  = system.gmap.frames[-1]
-        latest_points = system.gmap.get_frame_points(latest_frame)
-        latest_obs    = system.gmap.get_frame_observes(latest_frame)
-        
-        frame = self.frame
-        time  = self.time if self.prev_time is None else self.prev_time
-        assert frame is not None and time is not None
-        
-        out_msg = to_pointcloud(
-            position  = latest_points.position,
-            keypoints = latest_obs.pixel_uv,
-            frame_id  = frame,
-            colors    = latest_points.color,
-            time      = time
-        )
-        self.point_pipe.publish(out_msg)
-  
-    def publish_latest_stereo(self, system: MACVO):
-        if self.img_pipes is None: return
-        
-        source = system.prev_frame
-        if source is None: return
-        frame = self.frame
-        time  = self.time if self.prev_time is None else self.prev_time
-        assert frame is not None and time is not None
-        
-        msg: Image = to_image(
-            (resize(img = source.imageL[0].clone(), size = [320, 240]).permute(1, 2, 0).numpy() * 255).astype(np.uint8),
-            encoding="bgr8", frame_id=frame, time=time
-        )
-        self.img_pipes.publish(msg)
-        
-        
-    def receive_frame(self, msg_L: Image, msg_R: Image) -> None:
-        self.prev_frame, self.prev_time = self.frame, self.time
-        
-        self.frame        = msg_L.header.frame_id
-        imageL, self.time = from_image(msg_L), msg_L.header.stamp
-        imageR            = from_image(msg_R)
-        self.get_logger().info(f"{self.odometry.gmap}")
-        
-        # Receive image
-        meta=MetaInfo(
-            idx=self.frame_idx,
-            baseline=self.camera.bl,
-            width=self.camera.width,
-            height=self.camera.height,
-            K=torch.tensor([[self.camera.fx, 0., self.camera.cx],
-                            [0., self.camera.fy, self.camera.cy],
-                            [0., 0., 1.]])
-        )
-        frame = SourceDataFrame(
-                meta=meta,
+        # Instantiate a frame and scale to the desired height & width
+        stereo_frame = self.frame_fn(StereoFrame(
+            idx    =[self.frame_id],
+            time_ns=[timestamp.nanosec],
+            stereo =StereoData(
+                T_BS=pp.identity_SE3(1),
+                K   =torch.tensor([[
+                    [self.camera.fx, 0.            , self.camera.cx],
+                    [0.            , self.camera.fy, self.camera.cy],
+                    [0.            , 0.            , 1.            ]
+                ]]),
+                baseline=torch.tensor([self.camera.bl]),
+                time_ns=[timestamp.nanosec],
+                height=self.camera.height,
+                width=self.camera.width,
                 imageL=torch.tensor(imageL)[..., :3].float().permute(2, 0, 1).unsqueeze(0) / 255.,
                 imageR=torch.tensor(imageR)[..., :3].float().permute(2, 0, 1).unsqueeze(0) / 255.,
-                imu=None,
-                gtFlow=None, gtDepth=None, gtPose=None, flowMask=None
-            ).scale_image(scale_u=self.scale_u, scale_v=self.scale_v)
+            )
+        ))
+        self.odometry.run(stereo_frame)
         
-        self.odometry.run(frame)
-        self.frame_idx += 1
+        # Pose-processing
+        self.frame_id += 1
+    
+    def destroy_node(self):
+        self.odometry.terminate()
 
 
 def main():
@@ -158,12 +146,12 @@ def main():
     
     # Create Node and start running
     node = MACVONode(
-        imageL_topic="/zed/zed_node/left/image_rect_color",
-        imageR_topic="/zed/zed_node/right/image_rect_color",
-        pose_topic  ="/macvo/pose",
-        point_topic ="/macvo/map",
-        img_stream  ="/macvo/img",
-        MACVO_config=str(Path(args.config))
+        config=Path(args.config),
+        imageL_subscribe="/zed/zed_node/left/image_rect_color",
+        imageR_subscribe="/zed/zed_node/right/image_rect_color",
+        pose_publish    ="/macvo/pose",
+        map_pc_publish  ="/macvo/map",
+        imageL_publish  ="/macvo/img",
     )
     print('MACVO Node created.')
     rclpy.spin(node)
@@ -172,6 +160,4 @@ def main():
     node.destroy_node()
     rclpy.shutdown()
 
-
-if __name__ == '__main__':
-    main()
+if __name__ == '__main__': main()
