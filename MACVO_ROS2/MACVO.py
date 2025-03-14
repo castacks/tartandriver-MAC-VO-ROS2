@@ -94,7 +94,11 @@ class MACVONode(Node):
         pose_msg = to_stamped_pose(pose, self.coord_frame, time)
         
         # Latest map
-        points = system.graph.get_frame2map(system.graph.frames[-2:-1])
+        if system.mapping:
+            points = system.graph.get_frame2map(system.graph.frames[-2:-1])
+        else:
+            points = system.graph.get_match2point(system.graph.get_frame2match(system.graph.frames[-1:]))
+
         map_pc_msg = to_pointcloud(
             position  = points.data["pos_Tw"],
             keypoints = None,
@@ -102,6 +106,7 @@ class MACVONode(Node):
             colors    = points.data["color"],
             time      = time,
         )
+        
         self.pose_send.publish(pose_msg)
         self.map_send.publish(map_pc_msg)
 
