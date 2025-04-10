@@ -22,4 +22,4 @@ ros2 run MACVO_ROS2 MACVO --config [PATH_TO_CONFIG]
 
 ## Pretrained Model
 
-Please follow the `README.md` on [https://github.com/MAC-VO/MAC-VO](https://github.com/MAC-VO/MAC-VO) to download the pre-trained model. The default path for the pre-trained model is set to be `MACVO_ROS2/src/Module`
+Please follow the `README.md` on [https://github.com/MAC-VO/MAC-VO](https://github.com/MAC-VO/MAC-VO) to download the pre-trained model. The default path for the pre-trained model is set to be `MACVO_ROS2/Model`
