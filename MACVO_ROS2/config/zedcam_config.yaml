@@ -65,7 +65,7 @@
         pos_tracking:
             pos_tracking_enabled: false # True to enable positional tracking from start
             pos_tracking_mode: "GEN_2" # Matches the ZED SDK setting: 'GEN_1', 'GEN_2'
-            imu_fusion: false # enable/disable IMU fusion. When set to false, only the optical odometry will be used.
+            imu_fusion: true # enable/disable IMU fusion. When set to false, only the optical odometry will be used. 
             publish_tf: false # [usually overwritten by launch file] publish `odom -> camera_link` TF
             publish_map_tf: false # [usually overwritten by launch file] publish `map -> odom` TF
             map_frame: "map"
@@ -75,7 +75,7 @@
             reset_odom_with_loop_closure: false # Re-initialize odometry to the last valid pose when loop closure happens (reset camera odometry drift)
             depth_min_range: 0.0 # Set this value for removing fixed zones of the robot in the FoV of the camerafrom the visual odometry evaluation
             set_as_static: false # If 'true' the camera will be static and not move in the environment
-            set_gravity_as_origin: false # If 'true' align the positional tracking world to imu gravity measurement. Keep the yaw from the user initial pose.
+            set_gravity_as_origin: true # If 'true' align the positional tracking world to imu gravity measurement. Keep the yaw from the user initial pose.
             floor_alignment: false # Enable to automatically calculate camera/floor offset
             initial_base_pose: [0.0, 0.0, 0.0, 0.0, 0.0, 0.0] # Initial position of the `camera_link` frame in the map -> [X, Y, Z, R, P, Y]
             path_pub_rate: 2.0 # [DYNAMIC] - Camera trajectory publishing frequency
@@ -100,7 +100,7 @@
             target_yaw_uncertainty: 1e-2 # defines the target yaw uncertainty at which the calibration process between GNSS and VIO concludes. The unit of this parameter is in radian. By default, the threshold is set at 0.1 radians.
 
         mapping:
-            mapping_enabled: false # True to enable mapping and fused point cloud pubblication
+            mapping_enabled: true # True to enable mapping and fused point cloud pubblication
             resolution: 0.05 # maps resolution in meters [min: 0.01f - max: 0.2f]
             max_mapping_range: 5.0 # maximum depth range while mapping in meters (-1 for automatic calculation) [2.0, 20.0]
             fused_pointcloud_freq: 1.0 # frequency of the publishing of the fused colored point cloud

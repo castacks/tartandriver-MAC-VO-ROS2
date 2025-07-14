@@ -5,6 +5,8 @@ import pypose as pp
 from rclpy.node import Node
 from sensor_msgs.msg import Image, PointCloud
 from geometry_msgs.msg import PoseStamped
+from nav_msgs.msg import Odometry
+
 from message_filters import ApproximateTimeSynchronizer, Subscriber
 from ament_index_python.packages import get_package_share_directory
 from builtin_interfaces.msg import Time
@@ -20,6 +22,7 @@ from .MessageFactory import to_stamped_pose, from_image, to_pointcloud, to_image
 # Add the src directory to the Python path
 src_path = os.path.abspath(os.path.join(os.path.dirname(__file__), 'src'))
 sys.path.insert(0, src_path)
+
 if TYPE_CHECKING:
     # To make static type checker happy : )
     from src.Odometry.MACVO import MACVO
@@ -28,7 +31,7 @@ if TYPE_CHECKING:
     from src.Utility.PrettyPrint import Logger
     from src.Utility.Timer import Timer
 else:
-    import DataLoader
+    from torch.utils.data import DataLoader #changed
     from Odometry.MACVO import MACVO                
     from DataLoader import StereoFrame, StereoData, SmartResizeFrame
     from Utility.Config import load_config
@@ -59,7 +62,7 @@ class MACVONode(Node):
         self.stereo_recv = ApproximateTimeSynchronizer([imageL_recv, imageR_recv], queue_size=2, slop=0.1)
         self.stereo_recv.registerCallback(self.receive_stereo)
 
-        self.pose_send = self.create_publisher(PoseStamped, pose_publish, qos_profile=1)
+        self.pose_send = self.create_publisher(Odometry, pose_publish, qos_profile=1) #changed from PoseStamped
         self.map_send  = self.create_publisher(PointCloud, map_pc_publish, qos_profile=1)
         self.img_send  = self.create_publisher(Image, imageL_publish, qos_profile=1)
         
@@ -92,7 +95,8 @@ class MACVONode(Node):
         time = Time()
         time.sec = time_ns // 1_000_000_000
         time.nanosec = time_ns % 1_000_000_000
-        pose_msg = to_stamped_pose(pose, self.coord_frame, time)
+        pose_msg = to_stamped_pose(pose, self.coord_frame, time) 
+        
         
         # Latest map
         if system.mapping:
@@ -100,7 +104,7 @@ class MACVONode(Node):
         else:
             points = system.graph.get_match2point(system.graph.get_frame2match(system.graph.frames[-1:]))
 
-        map_pc_msg = to_pointcloud(
+        map_pc_msg = to_pointcloud( #TODO see how frames are defined in MACVO, compared to us
             position  = points.data["pos_Tw"],
             keypoints = None,
             frame_id  = self.coord_frame,
@@ -147,7 +151,7 @@ class MACVONode(Node):
 def main():
     rclpy.init()
     args = argparse.ArgumentParser()
-    args.add_argument("--config", type=str, default="./config/ZedConfig.yaml")
+    args.add_argument("--config", type=str, default="./config/ZedConfig.yaml") #TODO check this out
     args.add_argument("--timing", action="store_true", help="Record timing for system (active Utility.Timer for global time recording)")
     args = args.parse_args()
     
@@ -156,12 +160,16 @@ def main():
     # Optional End
     
     # Create Node and start running
-    node = MACVONode(
-        config=Path(args.config),
-        imageL_subscribe="/zed/zed_node/left/image_rect_color",
-        imageR_subscribe="/zed/zed_node/right/image_rect_color",
+
+    #TODO look at mission manager, how it uses config with a launch file
+    #1. check if its working running only this node
+    #2. update configs...
+    node = MACVONode( 
+        config=Path(args.config), #use config, similar to core/mission_manager
+        imageL_subscribe="/macvo/left/image_rect_bgr8", #"/multisense/left/image_rect_color",
+        imageR_subscribe="/macvo/right/image_rect_bgr8",
         pose_publish    ="/macvo/pose",
-        map_pc_publish  ="/macvo/map",
+        map_pc_publish  ="/macvo/pointcloud",
         imageL_publish  ="/macvo/img",
     )
     print('MACVO Node created.')

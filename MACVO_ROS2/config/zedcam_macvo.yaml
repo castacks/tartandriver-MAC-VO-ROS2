@@ -20,7 +20,7 @@ Odometry:
     # Profiling the system using torch, generate chrome json trace file.
     profile: false
 
-    mapping: false
+    mapping: true #changed
 
   cov:
     obs:
@@ -46,8 +46,8 @@ Odometry:
     type: MappingPointSelector
     args:
       device: *device
-      max_depth: 5.0
-      max_depth_cov: 0.005
+      max_depth: 100 # 5.0
+      max_depth_cov: 0.1 # 0.005
       mask_width: 32
 
   frontend:
@@ -57,7 +57,7 @@ Odometry:
       weight: ./model/MACVO_FrontendCov.pth
       dtype: fp32
       max_flow: -1
-      enforce_positive_disparity: false
+      enforce_positive_disparity: true # false
 
   motion:
     type: StaticMotionModel
@@ -98,9 +98,28 @@ Camera:
   # fy: 732.527587890625
   # cx: 982.960693359375
   # cy: 660.4515991210938
-  fx: 183.1318969727
-  fy: 183.1318969727
-  cx: 245.7401733398
-  cy: 165.1128997803
+
+# Original, Downsampled
+  # fx: 183.1318969727
+  # fy: 183.1318969727
+  # cx: 245.7401733398
+  # cy: 165.1128997803
+  # bl: 0.120022
+
+
+# From K matrix, color camera
+
+  # fx: 455.77496337890625
+  # fy: 456.319091796875
+  # cx: 497.1180114746094
+  # cy: 251.58502197265625
   
-  bl: 0.120022
+ 
+
+# New from P Matrix
+
+  fx: 477.604949951172  
+  fy: 477.604949951172
+  cx: 499.5
+  cy: 252
+  bl: 0.209692022937275
