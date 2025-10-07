@@ -1,7 +1,7 @@
 Common:
   # Some configurations are shared across multiple modules in Odometry, so I write them here.
   device: &device cuda
-  max_depth: &max_depth auto
+  max_depth: &max_depth 200
 
 Odometry:
   name: MACVO_Jetson
@@ -11,53 +11,72 @@ Odometry:
     # e.g. those rely on PWC-Net, only support running on cuda device.
     device: *device
     edgewidth: 32
-    num_point: 200 # Upper bound of KPs in each frame
+    num_point: 200 # Upper bound of KPs in each frame #changed from 200
 
     # Match covariance for keypoint on first observation (sub-pixel uncertainty
     # caused by the quantized pixel)
-    match_cov_default: 0.25
+    match_cov_default: 10 #0.5 #0.25 #10
 
     # Profiling the system using torch, generate chrome json trace file.
     profile: false
 
-    mapping: true #changed
+    mapping: true # Changed
 
   cov:
     obs:
-      type: MatchCovariance
+      type: MatchCovariance #apply exp(*2) before it is filtered, only if not applied, in inference where flow, cov is outputted from model
       args:
         device: *device
         kernel_size: 31
-        match_cov_default: 0.25
+        match_cov_default: 10 #0.5 #10
         min_depth_cov: 0.05
         min_flow_cov: 0.25
+        # min_depth_cov: 0.01
+        # min_flow_cov: 0.01
+
 
   keypoint:
-    type: CovAwareSelector
+    type: CovAwareSelector #determines odometry
     args:
       device: *device
       kernel_size: 7
       mask_width: 32
       max_depth: *max_depth
-      max_depth_cov: 250.0
-      max_match_cov: 100.0
+      max_depth_cov: 10 #0.5 #250.0
+      max_match_cov: 10 #0.5 #100.0
   
   mappoint:
+    # type: GridSelector #RandomSelector
+    # args:
+    #   device: *device
+    #   mask_width: 16
+
+
+    # # type: HybridKeypointSelector
+    # # args:
+    # #         max_depth: *max_depth
+    # #         max_depth_cov: 0.5 
+    # #         mask_width: 16
+    # #         depth_threshold: 0.5 
+    # #         device: *device
+        
+
+
     type: MappingPointSelector
     args:
       device: *device
-      max_depth: 100 # 5.0
-      max_depth_cov: 0.1 # 0.005
+      max_depth: 40 # 5.0 #usually tuned
+      max_depth_cov: 1000 #0.5 # 0.005 #usually tuned, inkl. max depth
       mask_width: 32
 
   frontend:
     type: CUDAGraph_FlowFormerCovFrontend
     args:
       device: *device
-      weight: ./model/MACVO_FrontendCov.pth
+      weight: /home/tartandriver/tartandriver_ws/src/slam/mac_vo_ros2/Model/MACVO_FrontendCov.pth # Changed from ./model/MACVO_Frontend.pth, for using with ROS node
       dtype: fp32
       max_flow: -1
-      enforce_positive_disparity: true # false
+      enforce_positive_disparity: true # Changed from false
 
   motion:
     type: StaticMotionModel
@@ -69,12 +88,12 @@ Odometry:
       filter_args:
         - type: CovarianceSanityFilter
           args:
-        - type: SimpleDepthFilter
-          args:
-            min_depth: 0.05
-            max_depth: *max_depth
-        - type: LikelyFrontOfCamFilter
-          args:
+        # - type: SimpleDepthFilter
+        #   args:
+        #     min_depth: 0.05
+        #     max_depth: *max_depth
+  #       - type: LikelyFrontOfCamFilter
+  #         args:
   
   postprocess:
     type: MotionInterpolate
@@ -93,33 +112,17 @@ Odometry:
 
 Camera:
   # NOTE: Since in zedcam_config.yaml we have down-sampled the image by 4, changed
-  # the intrinsic accordingly.
-  # fx: 732.527587890625
-  # fy: 732.527587890625
-  # cx: 982.960693359375
-  # cy: 660.4515991210938
-
-# Original, Downsampled
-  # fx: 183.1318969727
-  # fy: 183.1318969727
-  # cx: 245.7401733398
-  # cy: 165.1128997803
-  # bl: 0.120022
-
 
 # From K matrix, color camera
-
   # fx: 455.77496337890625
   # fy: 456.319091796875
   # cx: 497.1180114746094
   # cy: 251.58502197265625
   
- 
+# New from Yifei, vs old from sam
 
-# New from P Matrix
-
-  fx: 477.604949951172  
-  fy: 477.604949951172
-  cx: 499.5
-  cy: 252
-  bl: 0.209692022937275
+  fx: 455.7750 #477.604949951172  
+  fy: 456.3191 #477.604949951172
+  cx: 497.1180 #499.5
+  cy: 251.8580 #252
+  bl: 0.21     #0.209692022937275
