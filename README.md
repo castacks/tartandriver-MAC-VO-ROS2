@@ -17,7 +17,7 @@ source install/local_setup.bash
 To launch the MAC-VO Node, use the following config, substitute `[PATH_TO_CONFIG]` with your own `.yaml` config path.
 
 ```
-ros2 run MACVO_ROS2 MACVO --config [PATH_TO_CONFIG]
+ros2 run mac_ros2 MACVO --config [PATH_TO_CONFIG]
 ```
 
 ## Pretrained Model

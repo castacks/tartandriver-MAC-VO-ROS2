@@ -40,7 +40,7 @@ else:
     from Utility.PrettyPrint import Logger
     from Utility.Timer import Timer
 
-PACKAGE_NAME = "MACVO_ROS2"
+PACKAGE_NAME = "mac_ros2"
 
 # MAC-VO Node
 

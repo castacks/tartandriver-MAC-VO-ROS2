@@ -1,7 +1,7 @@
 import os
 from setuptools import find_packages, setup
 
-package_name = 'MACVO_ROS2'
+package_name = 'mac_ros2'
 
 def package_files(directory):
     paths = []
@@ -10,7 +10,7 @@ def package_files(directory):
             paths.append(os.path.join('..', path, filename))
     return paths
 
-extra_files = package_files('MACVO_ROS2/src') + package_files('MACVO_ROS2/config')
+extra_files = package_files('mac_ros2/src') + package_files('mac_ros2/config')
 
 setup(
     name=package_name,
@@ -31,7 +31,7 @@ setup(
     tests_require=['pytest'],
     entry_points={
         'console_scripts': [
-            'MACVO = MACVO_ROS2.MACVO:main',
+            'MACVO = mac_ros2.MACVO:main',
         ],
     },
 )
