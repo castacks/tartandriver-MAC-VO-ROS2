@@ -1,6 +1,7 @@
 import std_msgs.msg as std_msgs
 import sensor_msgs.msg as sensor_msgs
 import geometry_msgs.msg as geometry_msgs
+import nav_msgs.msg as nav_msgs
 from builtin_interfaces.msg import Time
 
 import sys
@@ -72,12 +73,17 @@ def to_stamped_pose(pose: pp.LieTensor | torch.Tensor, frame_id: str, time: Time
     out_msg.pose.position.x = pose_[0].item()
     out_msg.pose.position.y = pose_[1].item()
     out_msg.pose.position.z = pose_[2].item()
-    
-    out_msg.pose.orientation.x = pose_[3].item()
+    out_msg.pose.orientation.x =  pose_[3].item()
     out_msg.pose.orientation.y = pose_[4].item()
     out_msg.pose.orientation.z = pose_[5].item()
-    out_msg.pose.orientation.w = pose_[6].item()
-    return out_msg
+    out_msg.pose.orientation.w =  pose_[6].item()
+
+    odom_out_msg = nav_msgs.Odometry()
+    odom_out_msg.header = out_msg.header
+    odom_out_msg.child_frame_id = frame_id
+    odom_out_msg.pose.pose = out_msg.pose
+    return odom_out_msg
+    #return out_msg
 
 
 def from_image(msg: sensor_msgs.Image) -> np.ndarray:

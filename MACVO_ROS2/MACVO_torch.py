@@ -51,6 +51,7 @@ class MACVONode():
         
         cfg, _ = load_config( path=Path(config_fp) )
         self.frame_id = 0
+
         self.camera = cfg.Camera
         self.device = device
 
