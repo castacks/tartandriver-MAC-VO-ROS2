@@ -10,7 +10,7 @@ def package_files(directory):
             paths.append(os.path.join('..', path, filename))
     return paths
 
-extra_files = package_files('mac_ros2/src') + package_files('mac_ros2/config')
+extra_files = package_files('mac_ros2/mac_slam') + package_files('mac_ros2/config')
 
 setup(
     name=package_name,
@@ -19,7 +19,7 @@ setup(
     data_files=[
         ('share/ament_index/resource_index/packages', ['resource/' + package_name]),
         ('share/' + package_name, ['package.xml']),
-        ('share/' + package_name + "/model", ['Model/MACVO_FrontendCov.pth', 'Model/MACVO_posenet.pkl'])
+        ('share/' + package_name + "/mac_slam/Model", ['Model/MACVO_FrontendCov.pth', 'Model/MACVO_posenet.pkl'])
     ],
     package_data={package_name: extra_files},
     install_requires=['setuptools'],

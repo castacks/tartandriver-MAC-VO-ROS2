@@ -1,3 +1,4 @@
+# deprecated in offroad
 import rclpy
 import torch
 import pypose as pp
@@ -22,16 +23,16 @@ from rclpy.clock import Clock, ClockType
 from rclpy.parameter import Parameter
 
 # Add the src directory to the Python path
-src_path = os.path.abspath(os.path.join(os.path.dirname(__file__), 'src'))
+src_path = os.path.abspath(os.path.join(os.path.dirname(__file__), 'mac_slam'))
 sys.path.insert(0, src_path)
 
 if TYPE_CHECKING:
     # To make static type checker happy : )
-    from src.Odometry.MACVO import MACVO
-    from src.DataLoader import StereoFrame, StereoData, SmartResizeFrame
-    from src.Utility.Config import load_config
-    from src.Utility.PrettyPrint import Logger
-    from src.Utility.Timer import Timer
+    from mac_slam.Odometry.MACVO import MACVO
+    from mac_slam.DataLoader import StereoFrame, StereoData, SmartResizeFrame
+    from mac_slam.Utility.Config import load_config
+    from mac_slam.Utility.PrettyPrint import Logger
+    from mac_slam.Utility.Timer import Timer
 else:
     from torch.utils.data import DataLoader #changed
     from Odometry.MACVO import MACVO                
