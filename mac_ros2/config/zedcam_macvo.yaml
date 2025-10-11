@@ -1,3 +1,4 @@
+# deprecated, not used in offroad.
 Common:
   # Some configurations are shared across multiple modules in Odometry, so I write them here.
   device: &device cuda
@@ -73,7 +74,7 @@ Odometry:
     type: CUDAGraph_FlowFormerCovFrontend
     args:
       device: *device
-      weight: /home/tartandriver/tartandriver_ws/src/slam/mac_vo_ros2/Model/MACVO_FrontendCov.pth # Changed from ./model/MACVO_Frontend.pth, for using with ROS node
+      weight: /home/tartandriver/tartandriver_ws/src/slam/mac_ros2/Model/MACVO_FrontendCov.pth # Changed from ./model/MACVO_Frontend.pth, for using with ROS node
       dtype: fp32
       max_flow: -1
       enforce_positive_disparity: true # Changed from false

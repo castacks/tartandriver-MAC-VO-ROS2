@@ -1,6 +1,7 @@
 build/*
 install/*
 log/*
-MACVO_ROS2/Model/*
+mac_ros2/Model/*
 *.pth
 *.pkl
+__pycache__/

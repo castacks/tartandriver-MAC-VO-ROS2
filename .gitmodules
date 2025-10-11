@@ -1,3 +1,6 @@
-[submodule "MACVO_ROS2/src"]
-	path = MACVO_ROS2/src
+[submodule "mac_ros2/src"]
+	path = mac_ros2/src
 	url = https://github.com/MAC-VO/MAC-VO.git
+[submodule "mac_ros2/mac_slam"]
+	path = mac_ros2/mac_slam
+	url = git@github.com:castacks/MAC-SLAM-Stable.git
