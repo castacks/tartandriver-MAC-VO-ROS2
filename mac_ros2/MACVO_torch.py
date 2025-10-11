@@ -66,11 +66,11 @@ class MACVONode():
 
         self.camera = cfg.Camera
         self.device = device
+        self.useRR = getattr(cfg, 'useRR', False)
 
-        if True:
+        if self.useRR:
             rr_plt.default_mode = "rerun"
             rr_plt.init_connect("offroad macvo")
-            # fig_plt.default_mode = "none" #"image" if args.saveplt else "none"
 
         # Set up MACVO odometry
         original_cwd = os.getcwd()
@@ -139,7 +139,7 @@ class MACVONode():
         self.odometry.run(stereo_frame)
         self.frame_id += 1
 
-        if True:
+        if self.useRR:
             VisualizeRerunCallback(stereo_frame, self.odometry)
             rr_plt.log_trajectory("/world/est", pp.SE3(self.odometry.graph.frames.data["pose"].data))
             try:
