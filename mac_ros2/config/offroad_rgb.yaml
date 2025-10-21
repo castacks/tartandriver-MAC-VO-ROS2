@@ -21,7 +21,7 @@ Odometry:
     profile: false
 
     # Mapping mode provides the dense mapping
-    mapping: 20000
+    mapping: 10000
   
     # Online mode does not keep accumulated data inside the VO module.
     online: true
@@ -61,7 +61,8 @@ Odometry:
     #   max_depth: 40
 
   frontend:
-    type: CUDAGraph_FlowFormerCovFrontend
+    # type: CUDAGraph_FlowFormerCovFrontend
+    type: FlowFormerCovFrontend
     args:
       device: *device
       weight: /home/tartandriver/tartandriver_ws/src/slam/mac_ros2/Model/MACVO_FrontendCov.pth # ./Model/MACVO_FrontendCov.pth

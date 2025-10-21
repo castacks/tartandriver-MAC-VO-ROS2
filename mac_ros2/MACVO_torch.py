@@ -80,8 +80,8 @@ class MACVONode():
         finally:
             os.chdir(original_cwd)
 
-        # self.frame_fn = SmartResizeFrame({"height": 272, "width": 512, "interp": "nearest"})
-        self.frame_fn = ScaleFrame(dict(scale_u=2, scale_v=2, interp='nearest')) #TODO: change to config arg, not actually 2.
+        self.frame_fn = SmartResizeFrame({"height": 272, "width": 512, "interp": "nearest"})
+        # self.frame_fn = ScaleFrame(dict(scale_u=2, scale_v=2, interp='nearest')) #TODO: change to config arg, not actually 2.
 
         self.time = None
         self.prev_time = None
