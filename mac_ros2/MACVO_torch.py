@@ -90,7 +90,7 @@ class MACVONode():
 
     def publish_data(self, system: MACVO):
         # Latest pose       
-        pose    = torch.tensor(system.graph.frames.data["pose"][-1], device=self.device)
+        pose    = system.graph.frames.data["pose"][-1].clone().to(self.device)
         time_ns = int(system.graph.frames.data["time_ns"][-1].item())
         
         # Latest map
@@ -101,9 +101,9 @@ class MACVONode():
 
 
         points = {
-            'pos_Tc': torch.tensor(points.data['pos_Tc'], device=self.device),
-            'cov_Tc': torch.tensor(points.data['cov_Tw'], device=self.device), #mac called cov_Tc as cov_Tw
-            'color': torch.tensor(points.data['color'], device=self.device)
+            'pos_Tc': points.data['pos_Tc'].clone().to(self.device),
+            'cov_Tc': points.data['cov_Tw'].clone().to(self.device), #mac called cov_Tc as cov_Tw
+            'color':  points.data['color'].clone().to(self.device)
         }
         feature_keys = self.output_feature_keys
         return pose, points, time_ns, feature_keys
