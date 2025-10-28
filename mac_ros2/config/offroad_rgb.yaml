@@ -61,8 +61,8 @@ Odometry:
     #   max_depth: 40
 
   frontend:
-    # type: CUDAGraph_FlowFormerCovFrontend
-    type: FlowFormerCovFrontend
+    type: CUDAGraph_FlowFormerCovFrontend
+    # type: FlowFormerCovFrontend #only use this when met cudagraph issues
     args:
       device: *device
       weight: /home/tartandriver/tartandriver_ws/src/slam/mac_ros2/Model/MACVO_FrontendCov.pth # ./Model/MACVO_FrontendCov.pth
@@ -70,6 +70,8 @@ Odometry:
       dec_dtype: bf16
       decoder_depth: 12
       enforce_positive_disparity: false
+      height: 272 #make sure this is correct for cuda graph warmup, init
+      width: 512
 
   motion:
     type: StaticMotionModel

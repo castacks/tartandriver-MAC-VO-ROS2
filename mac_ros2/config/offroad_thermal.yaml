@@ -61,15 +61,17 @@ Odometry:
     #   max_depth: 40
 
   frontend:
-    # type: CUDAGraph_FlowFormerCovFrontend
-    type: FlowFormerCovFrontend
+    type: CUDAGraph_FlowFormerCovFrontend
+    # type: FlowFormerCovFrontend
     args:
       device: *device
-      weight: /home/tartandriver/tartandriver_ws/src/slam/mac_ros2/Model/thermal_flow_mixed.pth #MACVO_FrontendCov.pth #Step_40000_flow_mixed.pth
+      weight: /home/tartandriver/tartandriver_ws/src/slam/mac_ros2/Model/Step_40000_flow_mixed.pth #MACVO_FrontendCov.pth, Step_40000_flow_mixed.pth
       enc_dtype: fp16
       dec_dtype: bf16
       decoder_depth: 12
       enforce_positive_disparity: false
+      height: 272
+      width: 512
 
   motion:
     type: StaticMotionModel
