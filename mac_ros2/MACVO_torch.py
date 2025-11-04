@@ -18,13 +18,13 @@ if TYPE_CHECKING:
     # To make static type checker happy : )
     from mac_slam.Src.Odometry.MACVO import MACVO
     from mac_slam.Src.DataLoader import StereoFrameData, StereoData, ScaleFrame, SmartResizeFrame
-    from mac_slam.Src.Utility.Config import load_config
+    from mac_slam.Src.Utility.Config import load_config, asNamespace
     from mac_slam.Src.Utility.Visualize import fig_plt, rr_plt
     from mac_slam.Src.Utility.PrettyPrint import print_as_table, ColoredTqdm, Logger
 else:
     from Src.Odometry.MACVO import MACVO                
     from Src.DataLoader import StereoFrameData, StereoData, ScaleFrame, SmartResizeFrame
-    from Src.Utility.Config import load_config
+    from Src.Utility.Config import load_config, asNamespace
     from Src.Utility.Visualize import fig_plt, rr_plt
     from Src.Utility.PrettyPrint import print_as_table, ColoredTqdm, Logger
 
@@ -61,7 +61,11 @@ class MACVONode():
 
     def __init__(self, config_fp, device) -> None:
         
-        cfg, _ = load_config( path=Path(config_fp) )
+        if isinstance(config_fp, dict):
+            cfg = asNamespace(config_fp)
+            config_dict = config_fp
+        else:
+            cfg, config_dict = load_config(path=Path(config_fp))
         self.frame_id = 0
 
         self.camera = cfg.Camera
