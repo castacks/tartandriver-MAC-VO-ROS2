@@ -65,7 +65,7 @@ Odometry:
     # type: FlowFormerCovFrontend
     args:
       device: *device
-      weight: /home/tartandriver/tartandriver_ws/src/slam/mac_ros2/Model/MACT_Offroad.pth #MACVO_FrontendCov.pth, Step_40000_flow_mixed.pth
+      weight: /home/tartandriver/tartandriver_ws/models/macslam/MACT_Offroad.pth #MACVO_FrontendCov.pth | MACT_Offroad.pth 
       enc_dtype: fp16
       dec_dtype: bf16
       decoder_depth: 12

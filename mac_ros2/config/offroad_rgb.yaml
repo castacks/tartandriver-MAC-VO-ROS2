@@ -65,7 +65,7 @@ Odometry:
     # type: FlowFormerCovFrontend #only use this when met cudagraph issues
     args:
       device: *device
-      weight: /home/tartandriver/tartandriver_ws/src/slam/mac_ros2/Model/MACVO_FrontendCov.pth # ./Model/MACVO_FrontendCov.pth
+      weight: /home/tartandriver/tartandriver_ws/models/macslam/MACVO_FrontendCov.pth
       enc_dtype: fp16
       dec_dtype: bf16
       decoder_depth: 12
