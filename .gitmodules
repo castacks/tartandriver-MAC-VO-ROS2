@@ -3,4 +3,4 @@
 	url = https://github.com/MAC-VO/MAC-VO.git
 [submodule "mac_ros2/mac_slam"]
 	path = mac_ros2/mac_slam
-	url = git@github.com:castacks/MAC-SLAM-Stable.git
+	url = git@github.com:MAC-VO/MACSLAM-internal.git

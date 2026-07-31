@@ -3,112 +3,101 @@ Common:
 
 useRR: false #whether to use rerun for visualization (both offline and rosbag)
 
+# Settings owned by the torch_coordinator adapter, not MACSLAM.
+Adapter:
+  # Reset Map v3 after each mapped pair while retaining the newest frame and
+  # frontend cache. Set to 0 only for short offline debugging runs.
+  map_reset_interval: 1
+  resize:
+    height: 272
+    width: 512
+    interp: nearest
+
 Odometry:
   name: MACVO_Mapping
-  args:
-    # Device directive to the VO system
-    # NOTE: the system may not follow this device config strictly since some module
-    # e.g. those rely on PWC-Net, only support running on cuda device.
-    device: *device
-    edgewidth: 32
-    num_point: 200 # Upper bound of KPs in each frame
+  system:
+    keypoint:
+      max_age: 2
+    joint_optimizer:
+      # Local bundle adjustment is disabled for online bounded-map operation.
+      window_size: 0
+      window_step: 5
 
-    # Match covariance for keypoint on first observation (sub-pixel uncertainty
-    # caused by the quantized pixel)
-    match_cov_default: 0.25
-
-    # Profiling the system using torch, generate chrome json trace file.
-    profile: false
-
-    # Mapping mode provides the dense mapping
-    mapping: 10000
-  
-    # Online mode does not keep accumulated data inside the VO module.
-    online: true
-
-  cov:
-    obs:
-      type: MatchCovariance
-      args:
-        device: *device
-        kernel_size: 31
-        match_cov_default: 0.25
-        min_depth_cov: 0.05
-        min_flow_cov: 0.25
-
-  keypoint:
-    type: CovAwareSelector_NoDepth
-    args:
-      device: *device
-      kernel_size: 7
-      mask_width: 32
-      max_match_cov: 100.0
-
-  mappoint:
-    # Mapping feature can be conveniently turn off by using 
-    # "type: NoKeypointSelector" instead of the config below.
-    type: MappingPointSelector
-    args:
-      device: *device
-      max_depth: 40.0  # 5.0
-      max_depth_cov: 5.0 # 0.005
-      mask_width: 32
-
-    # type: GridMaxDepthSelector #RandomMaxDepthSelector
-    # args:
-    #   device: *device
-    #   mask_width: 32
-    #   max_depth: 40
-
-  frontend:
-    type: CUDAGraph_FlowFormerCovFrontend
-    # type: FlowFormerCovFrontend
-    args:
-      device: *device
-      weight: /home/tartandriver/tartandriver_ws/models/macslam/MACT_Offroad.pth #MACVO_FrontendCov.pth | MACT_Offroad.pth 
-      enc_dtype: fp16
-      dec_dtype: bf16
-      decoder_depth: 12
-      enforce_positive_disparity: false
-      height: 272
-      width: 512
-
-  motion:
+  motion_model:
     type: StaticMotionModel
     args:
 
-  outlier:
-    type: CovarianceSanityFilter
+  feature_tracker:
     args:
-  
-  postprocess:
-    type: MotionInterpolate
-    args:
-  
-  keyframe:
-    type: AllKeyframe
-    args:
-  
-  optimizer:
-    type: TwoFrame_PGO
-    args:
-      device: cpu
-      vectorize: true
-      parallel: true
-      graph_type: disp
-      autodiff: false
+      device: *device
+      mapping: 10000 #2000
+      keypoint:
+        num_point: 200
+        edge_width: 32
+        min_uv_cov: 0.25
+        max_age: 2
 
-Preprocess: !include ../mac_slam/Config/Experiment/Common/Preprocess.yaml
+    cov:
+      proj_3d:
+        type: MatchCovariance
+        args:
+          device: *device
+          kernel_size: 31
+          match_cov_default: 0.25
+          min_depth_cov: 0.05
+          min_flow_cov: 0.25
+      prop_2d:
+        type: Empty_2DCovarianceProp
+        args:
+
+    keypoint:
+      type: CovAwareSelector_NoDepth
+      args:
+        device: *device
+        kernel_size: 7
+        mask_width: 32
+        max_match_cov: 100.0
+
+    mappoint:
+      type: MappingPointSelector
+      args:
+        max_depth: 40.0
+        max_depth_cov: 5.0
+        mask_width: 32
+
+    frontend:
+      type: CUDAGraph_FlowFormerCovFrontend
+      args:
+        device: *device
+        weight: /home/tartandriver/tartandriver_ws/models/macslam/MACT_Offroad.pth
+        enc_dtype: fp16
+        dec_dtype: bf16
+        decoder_depth: 12
+        enforce_positive_disparity: false
+
+    outlier:
+      type: CovarianceSanityFilter
+      args:
+
+  track_optimizer:
+    type: TwoFramePGO
+    args:
+      graph_type: reproject+disparity
+      optim_type: LM
+      dtype: fp64
+      device: cpu
+
+  # A valid optimizer config is required by MACVO even when window_size is 0.
+  joint_optimizer:
+    type: LocalBA
+    args:
+      device: *device
+      graph_type: icp
 
 Camera:
   bl: 0.33505628508675633
   # after stereo rectify
   fx: 347.95429323
-  fy: 347.95429323 
+  fy: 347.95429323
   cx: 323.05630493
   cy: 247.92877579
-  # before stereo rectify
-  # fx: 412.42744451663316
-  # fy: 412.6067309651629
-  # cx: 313.3864399260144
-  # cy: 249.37501762553134
