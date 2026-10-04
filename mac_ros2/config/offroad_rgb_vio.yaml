@@ -1,0 +1,66 @@
+# Paths are relative to this file; estimator tuning comes directly from upstream.
+macslam_config: ../mac_slam/Config/Experiment/MACVIO/VIO_MACI2_FR_Offroad_RGB.yaml
+
+# Rectified 1024 x 544 Multisense calibration from MACSLAM's Offroad loader.
+Camera:
+  bl: 0.21
+  fx: 477.6049499511719
+  fy: 477.6049499511719
+  cx: 499.5
+  cy: 252.0
+  mask: Config/Mask/yamaha/rgb_left_rect.png
+
+ROS:
+  modality: rgb
+  topics:
+    # The bag's visible-light stereo pair is mono8; replicate to three channels.
+    image_left: /multisense/left/image_rect
+    image_right: /multisense/right/image_rect
+    imu: /novatel/imu/data
+    odometry: /macvio/odometry
+    status: /macvio/status
+
+  frames:
+    odom: macvio_odom
+    base: macvio_vehicle
+    imu: novatel/imu_frame
+
+  output:
+    publish_tf: true
+    publish_before_initialized: false
+
+  sync:
+    stereo_queue_size: 5
+    stereo_slop_sec: 0.02
+    stereo_work_queue_size: 2
+    imu_buffer_size: 4096
+    imu_wait_timeout_sec: 0.25
+    max_imu_sample_gap_sec: 0.03
+    max_imu_camera_offset_sec: 0.03
+
+  preprocess:
+    # Matches Preprocess.Offroad_RGB_VIO; scales intrinsics and mask as well.
+    type: SmartResizeFrame
+    args:
+      height: 272
+      width: 512
+      interp: nearest
+
+  imu:
+    nominal_rate_hz: 100.0
+    gravity: [0.0, 0.0, -9.80665]
+    use_message_covariance: false
+    acc_noise_density: [0.08, 0.08, 0.08]
+    gyro_noise_density: [0.004, 0.004, 0.004]
+    acc_random_walk: 0.003
+    gyro_random_walk: 1.9e-05
+
+  extrinsics:
+    # Body is vehicle (FLU). Compose vehicle <- NovAtel with the upstream
+    # RGB_T_BS_BODY_CAM (NovAtel <- camera NED) to keep the ROS vehicle contract.
+    camera_t_bs:
+      translation: [-0.09037314, 0.16905977, -0.13959942]
+      quaternion_xyzw: [0.993512141, 0.0003, -0.113101382, 0.0119001454]
+    imu_t_bs:
+      translation: [-0.508, -0.05, -0.152]
+      quaternion_xyzw: [0.0, 0.0, 0.0, 1.0]

@@ -1,0 +1,71 @@
+# Paths are relative to this file; estimator tuning comes directly from upstream.
+macslam_config: ../mac_slam/Config/Experiment/MACVIO/VIO_MACI2_FR_Offroad_Thermal.yaml
+
+Camera:
+  bl: 0.33505628508675633
+  fx: 345.65533767
+  fy: 345.65533767
+  cx: 323.12110519
+  cy: 247.91493225
+  mask: Config/Mask/yamaha/thermal_left_rect.png
+
+ROS:
+  modality: thermal
+  topics:
+    image_left: /thermal_left/image_processed
+    image_right: /thermal_right/image_processed
+    imu: /novatel/imu/data
+    odometry: /macvio/odometry
+    status: /macvio/status
+
+  frames:
+    odom: macvio_odom
+    # A virtual frame coincident with vehicle, but uniquely owned by MACVIO.
+    # Change this to vehicle only after the Super Odometry TF is disabled.
+    base: macvio_vehicle
+    imu: novatel/imu_frame
+
+  output:
+    publish_tf: true
+    publish_before_initialized: false
+
+  sync:
+    stereo_queue_size: 5
+    stereo_slop_sec: 0.02
+    stereo_work_queue_size: 2
+    imu_buffer_size: 4096
+    imu_wait_timeout_sec: 0.25
+    # Stop safely instead of integrating across missing measurements. The bag's
+    # nominal IMU period is 0.01 s, so these allow modest timestamp jitter.
+    max_imu_sample_gap_sec: 0.03
+    max_imu_camera_offset_sec: 0.03
+
+  preprocess:
+    # ROS topics are already rectified and FireStereo-v2 enhanced. Only apply
+    # the crop used by the tuned offroad_passive VIO configuration.
+    type: CenterCropFrame
+    args:
+      height: 400
+      width: 640
+
+  imu:
+    nominal_rate_hz: 100.0
+    gravity: [0.0, 0.0, -9.80665]
+    use_message_covariance: false
+    # Values used by the offroad_passive NovAtel loader.
+    acc_noise_density: [0.08, 0.08, 0.08]
+    gyro_noise_density: [0.004, 0.004, 0.004]
+    acc_random_walk: 0.003
+    gyro_random_walk: 1.9e-05
+
+  extrinsics:
+    # T_BS means body <- sensor. Body is vehicle (FLU); camera is MACSLAM's
+    # left-camera NED frame. Values compose vehicle->thermal optical and
+    # thermal optical->thermal optical NED from static_tf_publisher.
+    camera_t_bs:
+      translation: [-0.08925464, 0.1890916, -0.14084132]
+      quaternion_xyzw: [0.99399994, 0.00029330, -0.10872874, 0.01192082]
+    # NovAtel IMU frame pose in vehicle from the Yamaha static TF config.
+    imu_t_bs:
+      translation: [-0.508, -0.05, -0.152]
+      quaternion_xyzw: [0.0, 0.0, 0.0, 1.0]
