@@ -85,6 +85,7 @@ Odometry:
       graph_type: reproject+disparity
       optim_type: LM
       dtype: fp64
+      chi2: false
       device: cpu
 
   # A valid optimizer config is required by MACVO even when window_size is 0.

@@ -11,6 +11,7 @@ sys.path.insert(0, str(MACSLAM_PATH))
 from physics_atv_visual_mapping.feature_key_list import FeatureKeyList
 
 from Src.DataLoader import SmartResizeFrame, StereoData, StereoFrameData  # noqa: E402
+from Src.Module.Map import BodyNode, StereoNode  # noqa: E402
 from Src.Odometry.MACVO import MACVO  # noqa: E402
 from Src.Utility.Config import asNamespace, load_config  # noqa: E402
 
@@ -38,34 +39,34 @@ def extract_current_camera_mapping(
     camera before being returned.
     """
     assert system.prev is not None, "MACSLAM must process a frame before publishing"
-    current_sensor_id = int(system.prev.index)
-    if current_sensor_id == 0:
+    current_stereo_id = int(system.prev.index)
+    if current_stereo_id == 0:
         return empty_mapping(device)
 
-    source_sensor_id = current_sensor_id - 1
-    source_sensor_idx = torch.tensor([source_sensor_id], dtype=torch.long)
-    current_sensor_idx = torch.tensor([current_sensor_id], dtype=torch.long)
-    map_point_idx = system.Map.sensor2map.project(source_sensor_idx)
+    source_stereo_id = current_stereo_id - 1
+    source_stereo_idx = torch.tensor([source_stereo_id], dtype=torch.long)
+    current_stereo_idx = torch.tensor([current_stereo_id], dtype=torch.long)
+    map_point_idx = system.Map.stereo2map.neighbors(source_stereo_idx)
     if map_point_idx.numel() == 0:
         return empty_mapping(device)
 
-    source_body_idx = system.Map.stereo2body.project(source_sensor_idx)
-    current_body_idx = system.Map.stereo2body.project(current_sensor_idx)
+    source_body_idx = system.Map.stereo2body.neighbors(source_stereo_idx)
+    current_body_idx = system.Map.stereo2body.neighbors(current_stereo_idx)
 
     # T_WS = T_WB @ T_BS. Therefore T_S1S0 maps source-camera points to
     # the current camera while preserving the NED camera-axis convention.
     T_ws_source = (
         pp.SE3(system.Map.body.data["pose"][source_body_idx])
-        @ pp.SE3(system.Map.stereo.data["T_BS"][source_sensor_idx])
+        @ pp.SE3(system.Map.stereo.data["T_BS"][source_stereo_idx])
     )
     T_ws_current = (
         pp.SE3(system.Map.body.data["pose"][current_body_idx])
-        @ pp.SE3(system.Map.stereo.data["T_BS"][current_sensor_idx])
+        @ pp.SE3(system.Map.stereo.data["T_BS"][current_stereo_idx])
     )
     T_current_source = T_ws_current.Inv() @ T_ws_source
 
-    source_points = system.Map.map_points.data["pos_Tc"][map_point_idx]
-    source_covariances = system.Map.map_points.data["cov_Tc"][map_point_idx]
+    source_points = system.Map.map.data["pos_Tc"][map_point_idx]
+    source_covariances = system.Map.map.data["cov_Tc"][map_point_idx]
     rotation = T_current_source.rotation().matrix()[0]
 
     current_points = T_current_source.Act(
@@ -85,7 +86,7 @@ def extract_current_camera_mapping(
         "cov_Tc": current_covariances.detach()
         .clone()
         .to(device=device, dtype=torch.float32),
-        "color": system.Map.map_points.data["color"][map_point_idx]
+        "color": system.Map.map.data["color"][map_point_idx]
         .detach()
         .clone()
         .to(device=device, dtype=torch.float32),
@@ -97,10 +98,24 @@ def reset_online_map(system: T.Any) -> None:
     assert system.prev is not None, "MACSLAM context is required before resetting"
     assert system.FeatureTracker.prev is not None, "Frontend context is required before resetting"
 
-    system.Map.reset()
+    latest_body = BodyNode.init({
+        key: value[-1:].detach().clone()
+        for key, value in system.Map.body.data.items()
+    })
+    latest_stereo = StereoNode.init({
+        key: value[-1:].detach().clone()
+        for key, value in system.Map.stereo.data.items()
+    })
+
+    system.Map.clear()
+    body_idx = system.Map.body.push(latest_body)
+    stereo_idx = system.Map.stereo.push(latest_stereo)
+    system.Map.body2stereo.set(body_idx, stereo_idx)
+    system.Map.stereo2body.set(stereo_idx, body_idx)
+
     system.prev.index = 0
     system.prev.ba_id = 0
-    system.FeatureTracker.prev.prev_sensor_id = 0
+    system.FeatureTracker.prev.prev_stereo_id = 0
 
 class MACVONode:
 
