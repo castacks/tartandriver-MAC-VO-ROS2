@@ -40,6 +40,14 @@ ROS:
     max_imu_sample_gap_sec: 0.03
     max_imu_camera_offset_sec: 0.03
 
+  health:
+    watchdog_rate_hz: 10.0
+    # Both IMU and stereo silent: WARN after blind_warn_s, stop odometry after max_blind_s.
+    blind_warn_s: 1.0
+    max_blind_s: 3.0
+    # Re-instantiate MACVIO if IMU init has not succeeded this long after a reset.
+    reinit_timeout_s: 10.0
+
   preprocess:
     # ROS topics are already rectified and FireStereo-v2 enhanced. Only apply
     # the crop used by the tuned offroad_passive VIO configuration.

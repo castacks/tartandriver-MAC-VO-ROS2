@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from collections import deque
+import copy
 from dataclasses import dataclass
 import json
 import os
@@ -11,6 +12,7 @@ from queue import Empty, Full, Queue
 import sys
 from threading import Condition, Event, Lock, Thread
 import time
+import traceback
 from types import SimpleNamespace
 from typing import Any
 
@@ -30,6 +32,7 @@ from std_msgs.msg import String
 from tf2_ros import TransformBroadcaster
 
 from .MessageFactory import from_image
+from .vio_health import HealthConfig, HealthMonitor, WatchdogEvent
 
 
 MACSLAM_PATH = Path(__file__).resolve().parent / "mac_slam"
@@ -41,6 +44,11 @@ from Src.DataLoader import (  # noqa: E402
     SIFrameData,
     SmartResizeFrame,
     StereoData,
+)
+from Src.Module import IInitializer, IPreintegrator  # noqa: E402
+from Src.Module.Process import (  # noqa: E402
+    StereoInertialTrackingOptimizer,
+    TwoframeTracker_v2,
 )
 from Src.Odometry.MACVIO import MACVIO  # noqa: E402
 from Src.Utility.Config import load_config  # noqa: E402
@@ -95,6 +103,37 @@ def create_frame_transform(
     transform = transforms[config.type]
     transform.is_valid_config(config.args)
     return transform(config.args)
+
+
+def build_macvio(cfg: SimpleNamespace, previous: MACVIO | None = None) -> MACVIO:
+    """Build MACVIO; a rebuild reuses the previous tracker's loaded networks."""
+    original_cwd = os.getcwd()
+    try:
+        os.chdir(Path(__file__).resolve().parent)
+        if previous is None or not isinstance(
+            previous.FeatureTracker, TwoframeTracker_v2
+        ):
+            return MACVIO.from_config(cfg)
+        odometry = cfg.Odometry
+        # prev and last_depth are the tracker's only cross-frame state.
+        tracker = copy.copy(previous.FeatureTracker)
+        tracker.prev = None
+        tracker.last_depth = None
+        return MACVIO(
+            imu_preintegrate=IPreintegrator.instantiate(
+                odometry.imu_preintegrate.type, odometry.imu_preintegrate.args
+            ),
+            imu_initializer=IInitializer.instantiate(
+                odometry.imu_initializer.type, odometry.imu_initializer.args
+            ),
+            feature_tracker=(tracker, odometry.feature_tracker.args),
+            track_optimizer=(
+                StereoInertialTrackingOptimizer(odometry.track_optimizer),
+                odometry.track_optimizer,
+            ),
+        )
+    finally:
+        os.chdir(original_cwd)
 
 
 @dataclass(frozen=True)
@@ -232,13 +271,10 @@ class MacvioNode(Node):
         self.imu_t_bs = self._se3_from_config(ros_cfg.extrinsics.imu_t_bs)
         self.frame_transform = create_frame_transform(ros_cfg.preprocess)
         self.camera_mask = self._load_camera_mask(str(self.camera.mask))
+        self.health_config = HealthConfig.from_config(ros_cfg.health)
 
-        original_cwd = os.getcwd()
-        try:
-            os.chdir(Path(__file__).resolve().parent)
-            self.system = MACVIO.from_config(cfg)
-        finally:
-            os.chdir(original_cwd)
+        self.cfg = cfg
+        self.system = build_macvio(cfg)
 
         self.odom_publisher = self.create_publisher(
             Odometry, str(ros_cfg.topics.odometry), 10
@@ -262,7 +298,8 @@ class MacvioNode(Node):
         )
         self._stop_event = Event()
         self._state_lock = Lock()
-        self._state = "waiting_for_sensors"
+        self._health = HealthMonitor(self.health_config, self._now_ns())
+        self._last_published_state = ""
         self._last_error = ""
         self._frames_received = 0
         self._frames_processed = 0
@@ -298,6 +335,9 @@ class MacvioNode(Node):
         self.stereo_sync.registerCallback(self._receive_stereo)
 
         self.status_timer = self.create_timer(1.0, self._publish_status)
+        self.watchdog_timer = self.create_timer(
+            1.0 / self.health_config.watchdog_rate_hz, self._check_watchdog
+        )
         self._worker = Thread(target=self._worker_loop, name="macvio-worker")
         self._worker.start()
 
@@ -317,6 +357,9 @@ class MacvioNode(Node):
     def _se3_from_config(config: Any) -> pp.LieTensor:
         values = [*config.translation, *config.quaternion_xyzw]
         return pp.SE3(torch.tensor([values], dtype=torch.float64))
+
+    def _now_ns(self) -> int:
+        return self.get_clock().now().nanoseconds
 
     @staticmethod
     def _stamp_to_ns(stamp: Any) -> int:
@@ -359,6 +402,8 @@ class MacvioNode(Node):
                 return
             self._imu_buffer.append(sample)
             self._imu_condition.notify_all()
+        with self._state_lock:
+            self._health.record_imu(self._now_ns())
 
         if (
             sample.frame_id
@@ -373,6 +418,7 @@ class MacvioNode(Node):
 
     def _receive_stereo(self, left: Image, right: Image) -> None:
         with self._state_lock:
+            self._health.record_camera(self._now_ns())
             if self._stop_event.is_set():
                 self._frames_ignored_after_stop += 1
                 return
@@ -392,26 +438,106 @@ class MacvioNode(Node):
     def _worker_loop(self) -> None:
         while not self._stop_event.is_set():
             try:
-                pair = self._stereo_queue.get(timeout=0.1)
-            except Empty:
-                continue
-            if pair is None:
-                break
-            # Keep ROS alive so the error remains visible on the status topic.
-            try:
-                self._process_stereo(*pair)
-            except Exception as error:
+                self._reset_if_due()
+                try:
+                    pair = self._stereo_queue.get(timeout=0.1)
+                except Empty:
+                    continue
+                if pair is None:
+                    break
                 with self._state_lock:
-                    self._state = "error"
-                    self._last_error = f"{type(error).__name__}: {error}"
-                    self._frames_dropped += 1
-                    if isinstance(error, ImuContinuityError):
+                    if self._health.blind_fault:
+                        self._frames_dropped += 1
+                        continue
+                try:
+                    self._process_stereo(*pair)
+                except ImuContinuityError as error:
+                    with self._state_lock:
+                        self._frames_dropped += 1
                         self._imu_gap_count += 1
                         self._largest_imu_gap_sec = max(
                             self._largest_imu_gap_sec, error.gap_sec
                         )
-                self.get_logger().error("MACVIO frame failed: %s" % error)
-                self._stop_event.set()
+                    self._reset_system(f"{type(error).__name__}: {error}")
+            except Exception as error:
+                self._fail(error)
+
+    def _fail(self, error: Exception) -> None:
+        """Stop on an unexpected error; ROS stays up so ERROR remains visible."""
+        with self._state_lock:
+            self._health.fail()
+            self._last_error = f"{type(error).__name__}: {error}"
+            self._frames_dropped += 1
+        self.get_logger().error(
+            "MACVIO stopped on unexpected error:\n%s" % traceback.format_exc()
+        )
+        self._stop_event.set()
+        self._publish_status()
+
+    def _reset_if_due(self) -> None:
+        with self._state_lock:
+            reason = self._health.pending_reset(self._now_ns())
+        if reason is not None:
+            self._reset_system(reason)
+
+    def _reset_system(self, reason: str) -> None:
+        """Replace MACVIO with a fresh instance; never resume the old trajectory."""
+        started = time.monotonic()
+        with self._state_lock:
+            self._health.begin_reset(reason, self._now_ns(), self._last_stamp_ns)
+            reset_count = self._health.reset_count
+        self.get_logger().warning(
+            "Resetting MACVIO (reset %d): %s" % (reset_count, reason)
+        )
+        self._publish_status()
+
+        previous = self.system
+        previous.terminate()
+        self.system = build_macvio(self.cfg, previous)
+        del previous
+        with self._imu_condition:
+            self._imu_buffer.clear()
+            self._imu_boundary = None
+        self._last_frame_ns = None
+        while True:
+            try:
+                self._stereo_queue.get_nowait()
+            except Empty:
+                break
+
+        latency = time.monotonic() - started
+        with self._state_lock:
+            self._health.finish_reset(self._now_ns(), latency)
+        self.get_logger().info(
+            "MACVIO reset %d rebuilt in %.3f s; reinitializing"
+            % (reset_count, latency)
+        )
+        self._publish_status()
+
+    def _check_watchdog(self) -> None:
+        now_ns = self._now_ns()
+        with self._state_lock:
+            event = self._health.update_watchdog(now_ns)
+            imu_age, cam_age = self._health.ages_s(now_ns)
+            silence = self._health.silence_s(now_ns)
+            state = self._health.state(now_ns).value
+        ages = "IMU age %s, camera age %s" % (
+            "never" if imu_age is None else f"{imu_age:.2f} s",
+            "never" if cam_age is None else f"{cam_age:.2f} s",
+        )
+        if event == WatchdogEvent.BLIND_WARN:
+            self.get_logger().warning(
+                "MACVIO blind: no IMU or stereo for %.2f s (%s)" % (silence, ages),
+                throttle_duration_sec=1.0,
+            )
+        elif event == WatchdogEvent.BLIND_FAULT:
+            self.get_logger().error(
+                "MACVIO BLIND_FAULT: no IMU or stereo for %.2f s (%s); "
+                "odometry stopped until sensors return and MACVIO resets"
+                % (silence, ages)
+            )
+        if state != self._last_published_state:
+            self._publish_status()
 
     def _process_stereo(self, left: Image, right: Image) -> None:
         frame_ns = self._stamp_to_ns(left.header.stamp)
@@ -421,8 +547,6 @@ class MacvioNode(Node):
         samples = self._imu_samples_for_frame(frame_ns)
         if samples is None:
             with self._state_lock:
-                self._state = "waiting_for_imu"
-                self._last_error = ""
                 self._frames_dropped += 1
             return
 
@@ -472,21 +596,15 @@ class MacvioNode(Node):
         self.system.run(frame)
         self._last_frame_ns = frame_ns
         self._advance_imu_boundary(samples[-1])
+        initialized = self.system.imu_initcond is not None
         with self._state_lock:
             self._frames_processed += 1
             self._last_stamp_ns = frame_ns
             self._last_error = ""
-            if self.system.lost_track:
-                self._state = "lost_track"
-            elif self.system.imu_initcond is not None:
-                self._state = "ready"
-            else:
-                self._state = "initializing"
+            self._health.record_frame(initialized=initialized, degraded=False)
+            publish = self._health.publishing_allowed()
 
-        if (
-            self.system.imu_initcond is not None
-            or self.publish_before_initialized
-        ):
+        if publish and (initialized or self.publish_before_initialized):
             self._publish_odometry(left.header.stamp)
         self._publish_status()
 
@@ -517,8 +635,9 @@ class MacvioNode(Node):
                 return [available[-1]]
 
             if available[0].time_ns > self._imu_boundary.time_ns:
-                raise BufferError(
-                    "IMU buffer lost the previous camera boundary sample"
+                raise ImuContinuityError(
+                    "IMU buffer lost the previous camera boundary sample",
+                    (available[0].time_ns - self._imu_boundary.time_ns) / 1e9,
                 )
             interval = [
                 sample
@@ -706,14 +825,15 @@ class MacvioNode(Node):
             self.tf_broadcaster.sendTransform(transform)
 
     def _publish_status(self) -> None:
+        system = self.system
         with self._state_lock:
             payload = {
+                **self._health.status_fields(self._now_ns()),
                 "modality": self.modality,
                 "config_file": self.config_file,
                 "experiment_file": self.experiment_file,
-                "state": self._state,
-                "initialized": bool(self.system.imu_initcond is not None),
-                "lost_track": bool(self.system.lost_track),
+                "initialized": bool(system.imu_initcond is not None),
+                "lost_track": bool(system.lost_track),
                 "frames_received": self._frames_received,
                 "frames_processed": self._frames_processed,
                 "frames_dropped": self._frames_dropped,
@@ -723,6 +843,7 @@ class MacvioNode(Node):
                 "last_stamp_ns": self._last_stamp_ns,
                 "last_error": self._last_error,
             }
+            self._last_published_state = payload["state"]
         with self._imu_lock:
             payload["imu_buffered"] = len(self._imu_buffer)
         message = String()

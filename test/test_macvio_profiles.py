@@ -1,5 +1,7 @@
 """Check ROS camera selection against the upstream off-road VIO profiles."""
 
+import json
+import time
 from unittest.mock import Mock
 
 import numpy as np
@@ -16,6 +18,8 @@ from mac_ros2.macvio_node import (
     MACSLAM_PATH,
     MACVIO,
     MacvioNode,
+    TwoframeTracker_v2,
+    build_macvio,
     create_frame_transform,
     load_macvio_config,
     validate_imu_window,
@@ -207,6 +211,14 @@ def test_imu_window_accepts_continuous_coverage():
     assert largest_gap == pytest.approx(0.01)
 
 
+@pytest.mark.parametrize("modality", ["thermal", "rgb"])
+def test_profiles_define_health_limits(modality):
+    health = load_macvio_config(modality)[0].ROS.health
+    assert (health.blind_warn_s, health.max_blind_s) == (1.0, 3.0)
+    assert health.reinit_timeout_s == 10.0
+    assert health.watchdog_rate_hz == 10.0
+
+
 def test_imu_window_rejects_internal_gap():
     samples = [make_imu_sample(value) for value in (0, 10_000_000, 1_390_000_000)]
     with pytest.raises(ImuContinuityError, match="sample gap is too large"):
@@ -246,3 +258,113 @@ def test_ros_node_selects_camera_and_builds_frame(monkeypatch, modality, topic_p
         if node is not None:
             node.destroy_node()
         rclpy.shutdown()
+
+
+@pytest.fixture
+def mocked_node(monkeypatch):
+    systems = []
+
+    def factory(_config):
+        systems.append(Mock(imu_initcond=None, lost_track=False))
+        return systems[-1]
+
+    monkeypatch.setattr(MACVIO, "from_config", Mock(side_effect=factory))
+    rclpy.init(args=["--ros-args", "-p", "modality:=thermal"])
+    node = MacvioNode()
+    node.status_publisher = Mock()
+    try:
+        yield node, systems
+    finally:
+        node.destroy_node()
+        rclpy.shutdown()
+
+
+def wait_until(predicate, timeout=5.0):
+    deadline = time.monotonic() + timeout
+    while not predicate():
+        assert time.monotonic() < deadline, "timed out"
+        time.sleep(0.01)
+
+
+def last_status(node):
+    call = node.status_publisher.publish.call_args
+    return {} if call is None else json.loads(call.args[0].data)
+
+
+def test_imu_continuity_error_resets_instead_of_stopping(mocked_node, monkeypatch):
+    node, systems = mocked_node
+    node._imu_buffer.append(make_imu_sample(1))
+    node._imu_boundary = make_imu_sample(1)
+    node._last_frame_ns = 5
+    node._last_stamp_ns = 5
+
+    def fail(*_):
+        raise ImuContinuityError("IMU sample gap is too large", 1.06)
+
+    monkeypatch.setattr(node, "_process_stereo", fail)
+    node._receive_stereo(Image(), Image())
+    wait_until(lambda: last_status(node).get("reset_count") == 1
+               and last_status(node)["state"] == "INITIALIZING")
+
+    status = last_status(node)
+    assert not node._stop_event.is_set()
+    assert len(systems) == 2 and node.system is systems[1]
+    systems[0].terminate.assert_called_once()
+    assert status["last_reset_reason"].startswith("ImuContinuityError")
+    assert status["last_reset_frame_stamp_ns"] == 5
+    assert status["imu_gap_count"] == 1
+    assert status["largest_imu_gap_sec"] == pytest.approx(1.06)
+    assert node._imu_boundary is None and node._last_frame_ns is None
+    assert len(node._imu_buffer) == 0
+
+
+def test_unexpected_error_stops_with_error_state(mocked_node, monkeypatch):
+    node, systems = mocked_node
+
+    def fail(*_):
+        raise RuntimeError("bug")
+
+    monkeypatch.setattr(node, "_process_stereo", fail)
+    node._receive_stereo(Image(), Image())
+    wait_until(node._stop_event.is_set)
+    wait_until(lambda: last_status(node).get("state") == "ERROR")
+
+    status = last_status(node)
+    assert status["last_error"] == "RuntimeError: bug"
+    assert status["reset_count"] == 0
+    assert len(systems) == 1
+    node._receive_stereo(Image(), Image())
+    assert node._frames_ignored_after_stop == 1
+
+
+def test_status_reports_liveness_fields(mocked_node):
+    node, _ = mocked_node
+    node._publish_status()
+    status = last_status(node)
+    for key in (
+        "state", "reset_count", "last_reset_reason", "last_reset_stamp",
+        "imu_age_ms", "cam_age_ms", "frames_received", "frames_processed",
+        "frames_dropped", "imu_gap_count", "initialized", "lost_track",
+    ):
+        assert key in status
+    assert status["state"] == "INITIALIZING"
+
+
+def test_rebuild_reuses_tracker_networks():
+    config, _, _ = load_macvio_config("thermal")
+    tracker = object.__new__(TwoframeTracker_v2)
+    tracker.Frontend = object()
+    tracker.prev = object()
+    tracker.last_depth = object()
+    previous = Mock(FeatureTracker=tracker)
+
+    system = build_macvio(config, previous)
+
+    assert isinstance(system, MACVIO) and system is not previous
+    assert system.FeatureTracker is not tracker
+    assert system.FeatureTracker.Frontend is tracker.Frontend
+    assert system.FeatureTracker.prev is None
+    assert system.FeatureTracker.last_depth is None
+    assert tracker.prev is not None
+    assert system.imu_initcond is None and len(system.Map.body) == 0
+
