@@ -17,6 +17,8 @@ from rclpy.qos import qos_profile_sensor_data
 from std_msgs.msg import String
 from tf2_ros import TransformBroadcaster
 
+from .vio_health import MacvioSourceGate
+
 
 def quaternion_matrix(quaternion: np.ndarray) -> np.ndarray:
     """Convert an xyzw quaternion to a 3x3 rotation matrix."""
@@ -183,8 +185,7 @@ class LocalizationAdapter(Node):
         self.macvio_messages = 0
         self.output_messages = 0
         self.alignment_stamp_ns = 0
-        self.macvio_state = "unknown"
-        self.source_failed = False
+        self.macvio_gate = MacvioSourceGate()
         self.state = (
             "ready" if self.pose_source == "super_odometry" else "aligning"
         )
@@ -230,19 +231,20 @@ class LocalizationAdapter(Node):
         self.macvio_messages += 1
         if self.pose_source != "macvio":
             return
-        if self.source_failed:
+        if not self.macvio_gate.accept(self._stamp_ns(message)):
             return
-        if self.world_from_macvio_world is None:
+        if self.world_from_macvio_world is None or self.macvio_gate.needs_alignment:
             reference = self._nearest_reference(message)
             if reference is None:
                 self.state = "waiting_for_reference_alignment"
                 return
             self.world_from_macvio_world = initial_alignment(reference, message)
             self.alignment_stamp_ns = self._stamp_ns(message)
+            self.macvio_gate.needs_alignment = False
             self.state = "ready"
             self.get_logger().info(
-                "Aligned macvio_odom to sensor_init at stamp %d"
-                % self.alignment_stamp_ns
+                "Aligned macvio_odom to sensor_init at stamp %d (MACVIO reset %s)"
+                % (self.alignment_stamp_ns, self.macvio_gate.reset_count)
             )
         self._publish_selected(message, self.world_from_macvio_world)
 
@@ -261,20 +263,30 @@ class LocalizationAdapter(Node):
 
     def _receive_macvio_status(self, message: String) -> None:
         try:
-            status = json.loads(message.data)
-        except json.JSONDecodeError:
-            return
-        self.macvio_state = str(status.get("state", "unknown"))
-        if (
-            self.pose_source == "macvio"
-            and not self.source_failed
-            and self.macvio_state in {"error", "lost_track"}
-        ):
-            self.source_failed = True
-            self.state = f"source_{self.macvio_state}"
+            newly_failed, reset = self.macvio_gate.update(json.loads(message.data))
+        except (json.JSONDecodeError, KeyError, TypeError, ValueError) as error:
             self.get_logger().error(
-                "Selected MACVIO localization stopped: %s"
-                % self.macvio_state
+                "Ignoring malformed MACVIO status: %r" % error,
+                throttle_duration_sec=5.0,
+            )
+            return
+        if self.pose_source != "macvio":
+            return
+        if newly_failed:
+            self.get_logger().error("Selected MACVIO localization stopped: ERROR")
+        if reset:
+            self.world_from_macvio_world = None
+            self.get_logger().warning(
+                "MACVIO reset %d; re-aligning to %s"
+                % (self.macvio_gate.reset_count, self.world_frame)
+            )
+        if self.macvio_gate.failed:
+            self.state = "source_error"
+        elif not self.macvio_gate.available:
+            self.state = f"source_{self.macvio_gate.state.lower()}"
+        elif reset or self.state.startswith("source_"):
+            self.state = (
+                "aligning" if self.world_from_macvio_world is None else "ready"
             )
 
     def _publish_selected(
@@ -308,7 +320,8 @@ class LocalizationAdapter(Node):
                 "macvio_messages": self.macvio_messages,
                 "output_messages": self.output_messages,
                 "alignment_stamp_ns": self.alignment_stamp_ns,
-                "macvio_state": self.macvio_state,
+                "macvio_state": self.macvio_gate.state,
+                "macvio_reset_count": self.macvio_gate.reset_count,
                 "world_frame": self.world_frame,
                 "base_frame": self.base_frame,
             },
