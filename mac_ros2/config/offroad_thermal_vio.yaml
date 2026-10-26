@@ -1,5 +1,5 @@
 # Paths are relative to this file; estimator tuning comes directly from upstream.
-macslam_config: ../mac_slam/Config/Experiment/MACVIO/VIO_MACI2_FR_Offroad_Thermal.yaml
+macslam_config: ../mac_slam/Config/Experiment/MACVIO/Offroad/VIO_MACI2_FR_Yamaha_Thermal.yaml
 
 Camera:
   bl: 0.33505628508675633
@@ -48,11 +48,11 @@ ROS:
     reinit_timeout_s: 10.0
 
   preprocess:
-    # ROS topics are already rectified and FireStereo-v2 enhanced. Only apply
-    # the crop used by the tuned offroad_passive VIO configuration.
+    # ROS topics are already rectified and FireStereo-v2 enhanced. The tuned
+    # profile runs at full 512 x 640 resolution; the camera mask covers the hood.
     type: CenterCropFrame
     args:
-      height: 400
+      height: 512
       width: 640
 
   imu:

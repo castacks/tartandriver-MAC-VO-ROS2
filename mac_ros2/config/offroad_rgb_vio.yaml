@@ -1,5 +1,5 @@
 # Paths are relative to this file; estimator tuning comes directly from upstream.
-macslam_config: ../mac_slam/Config/Experiment/MACVIO/VIO_MACI2_FR_Offroad_RGB.yaml
+macslam_config: ../mac_slam/Config/Experiment/MACVIO/Offroad/VIO_MACI2_FR_Yamaha_RGB.yaml
 
 # Rectified 1024 x 544 Multisense calibration from MACSLAM's Offroad loader.
 Camera:

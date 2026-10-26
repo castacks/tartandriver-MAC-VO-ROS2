@@ -131,6 +131,7 @@ def build_macvio(cfg: SimpleNamespace, previous: MACVIO | None = None) -> MACVIO
                 StereoInertialTrackingOptimizer(odometry.track_optimizer),
                 odometry.track_optimizer,
             ),
+            imu_health=odometry.imu_health,
         )
     finally:
         os.chdir(original_cwd)

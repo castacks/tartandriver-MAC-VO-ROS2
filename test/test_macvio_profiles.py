@@ -40,14 +40,25 @@ from Src.Utility.Config import load_config
 @pytest.mark.parametrize("modality,label", [("thermal", "Thermal"), ("rgb", "RGB")])
 def test_profiles_load_upstream_estimator(modality, label):
     config, _, experiment_path = load_macvio_config(modality)
-    expected_path = MACSLAM_PATH / f"Config/Experiment/MACVIO/VIO_MACI2_FR_Offroad_{label}.yaml"
+    expected_path = (
+        MACSLAM_PATH / f"Config/Experiment/MACVIO/Offroad/VIO_MACI2_FR_Yamaha_{label}.yaml"
+    )
     upstream, _ = load_config(expected_path)
     assert experiment_path == expected_path
     assert config.Common == upstream.Common
     assert config.Odometry == upstream.Odometry
     MACVIO.is_valid_config(config.Odometry)
     sequence = getattr(upstream.Preprocess, f"Offroad_{label}_VIO")
-    assert config.ROS.preprocess == sequence[0]
+    geometric = [
+        step for step in sequence if step.type in {"CenterCropFrame", "SmartResizeFrame"}
+    ]
+    if geometric:
+        assert config.ROS.preprocess == geometric[0]
+    else:
+        mask = MacvioNode._load_camera_mask(config.Camera.mask)
+        assert config.ROS.preprocess.type == "CenterCropFrame"
+        args = config.ROS.preprocess.args
+        assert (args.height, args.width) == tuple(mask.shape[-2:])
 
 
 def test_explicit_config_overrides_modality():
@@ -79,7 +90,7 @@ def test_legacy_custom_config(tmp_path):
     MACVIO.is_valid_config(config.Odometry)
 
 
-@pytest.mark.parametrize("modality,height,width", [("thermal", 400, 640), ("rgb", 272, 512)])
+@pytest.mark.parametrize("modality,height,width", [("thermal", 512, 640), ("rgb", 272, 512)])
 def test_preprocessing_preserves_camera_geometry(modality, height, width):
     config, _, _ = load_macvio_config(modality)
     mask = MacvioNode._load_camera_mask(config.Camera.mask)
@@ -110,8 +121,7 @@ def test_preprocessing_preserves_camera_geometry(modality, height, width):
     if modality == "rgb":
         expected[:, :2] /= 2
     else:
-        expected[:, 1, 2] -= 56
-        torch.testing.assert_close(result.camera_mask, mask[:, :, 56:456])
+        torch.testing.assert_close(result.camera_mask, mask)
     torch.testing.assert_close(result.K, expected)
     assert float(result.baseline[0]) == pytest.approx(camera.bl)
 
@@ -261,7 +271,7 @@ def test_ros_node_selects_camera_and_builds_frame(monkeypatch, modality, topic_p
         message.header.stamp.nanosec = 1
         node._process_stereo(message, message)
         frame = system.run.call_args.args[0]
-        assert frame.stereo.imageL.shape[-2:] == ((400, 640) if modality == "thermal" else (272, 512))
+        assert frame.stereo.imageL.shape[-2:] == ((512, 640) if modality == "thermal" else (272, 512))
         assert frame.imu.acc_ws.shape == (1, 1, 3)
         assert node._frames_processed == 1
     finally:
