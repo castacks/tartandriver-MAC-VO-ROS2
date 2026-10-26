@@ -35,10 +35,9 @@ ROS:
     stereo_work_queue_size: 2
     imu_buffer_size: 4096
     imu_wait_timeout_sec: 0.25
-    # Stop safely instead of integrating across missing measurements. The bag's
-    # nominal IMU period is 0.01 s, so these allow modest timestamp jitter.
-    max_imu_sample_gap_sec: 0.03
-    max_imu_camera_offset_sec: 0.03
+    # Larger gaps or offsets reset MACVIO; clean 100 Hz data has gaps up to 44 ms.
+    max_imu_sample_gap_sec: 0.05
+    max_imu_camera_offset_sec: 0.05
 
   health:
     watchdog_rate_hz: 10.0

@@ -212,6 +212,16 @@ def test_imu_window_accepts_continuous_coverage():
 
 
 @pytest.mark.parametrize("modality", ["thermal", "rgb"])
+def test_profile_limits_accept_clean_imu_jitter(modality):
+    sync = load_macvio_config(modality)[0].ROS.sync
+    samples = [make_imu_sample(value) for value in (0, 44_000_000, 54_000_000)]
+    largest_gap = validate_imu_window(
+        samples, 98_000_000, sync.max_imu_sample_gap_sec, sync.max_imu_camera_offset_sec
+    )
+    assert largest_gap == pytest.approx(0.044)
+
+
+@pytest.mark.parametrize("modality", ["thermal", "rgb"])
 def test_profiles_define_health_limits(modality):
     health = load_macvio_config(modality)[0].ROS.health
     assert (health.blind_warn_s, health.max_blind_s) == (1.0, 3.0)
