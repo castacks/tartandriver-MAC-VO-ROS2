@@ -8,12 +8,11 @@ import numpy as np
 import pytest
 import rclpy
 from nav_msgs.msg import Odometry
-from sensor_msgs.msg import Image
+from sensor_msgs.msg import Image, Imu
 import torch
 import yaml
 
 from mac_ros2.macvio_node import (
-    ImuContinuityError,
     ImuSample,
     MACSLAM_PATH,
     MACVIO,
@@ -30,11 +29,34 @@ from mac_ros2.localization_adapter_node import (
     transform_odometry,
 )
 from Src.DataLoader import StereoData, StereoFrameData
+from Src.Module.IMU.IMUChain import VIOStatus
 from Src.DataLoader.Dataset.Offroad import (
     RGB_T_BS_BODY_CAM,
     THERMAL_T_BS_BODY_CAM,
 )
 from Src.Utility.Config import load_config
+from Src.Utility.Enum import IMUWindowStatus, VIOMode
+
+
+def idle_vio_status():
+    return VIOStatus(
+        mode=VIOMode.PRE_INIT,
+        frames_in_mode=0,
+        last_gap_s=0.0,
+        imu_age_s=float("inf"),
+        window_status=IMUWindowStatus.Gap,
+        n_chain_breaks=0,
+        n_dropped_samples=0,
+    )
+
+
+def mock_system():
+    return Mock(
+        imu_initcond=None,
+        lost_track=False,
+        vio_mode=VIOMode.PRE_INIT,
+        vio_status=idle_vio_status(),
+    )
 
 
 @pytest.mark.parametrize("modality,label", [("thermal", "Thermal"), ("rgb", "RGB")])
@@ -215,20 +237,30 @@ def test_localization_alignment_preserves_macvio_relative_motion():
     assert output.twist.twist.linear.x == pytest.approx(3.0)
 
 
-def test_imu_window_accepts_continuous_coverage():
-    samples = [make_imu_sample(value) for value in (0, 10_000_000, 20_000_000)]
-    largest_gap = validate_imu_window(samples, 25_000_000, 0.03, 0.03)
-    assert largest_gap == pytest.approx(0.01)
+def test_imu_window_reports_largest_gap_including_previous():
+    samples = [make_imu_sample(value) for value in (1_070_000_000, 1_080_000_000)]
+    assert validate_imu_window(samples, 10_000_000) == pytest.approx(1.06)
+    assert validate_imu_window(samples, None) == pytest.approx(0.01)
+
+
+def test_imu_window_accepts_empty_and_single_sample():
+    assert validate_imu_window([], 10_000_000) == 0.0
+    assert validate_imu_window([make_imu_sample(20_000_000)], None) == 0.0
+
+
+def test_imu_window_rejects_non_increasing_timestamps():
+    samples = [make_imu_sample(value) for value in (10_000_000, 10_000_000)]
+    with pytest.raises(ValueError, match="strictly increasing"):
+        validate_imu_window(samples, None)
 
 
 @pytest.mark.parametrize("modality", ["thermal", "rgb"])
-def test_profile_limits_accept_clean_imu_jitter(modality):
-    sync = load_macvio_config(modality)[0].ROS.sync
-    samples = [make_imu_sample(value) for value in (0, 44_000_000, 54_000_000)]
-    largest_gap = validate_imu_window(
-        samples, 98_000_000, sync.max_imu_sample_gap_sec, sync.max_imu_camera_offset_sec
-    )
-    assert largest_gap == pytest.approx(0.044)
+def test_profiles_take_imu_jitter_from_core(modality):
+    config = load_macvio_config(modality)[0]
+    assert config.Odometry.imu_health.jitter_max_ms == 50.0
+    assert not hasattr(config.ROS.sync, "max_imu_sample_gap_sec")
+    assert not hasattr(config.ROS.sync, "max_imu_camera_offset_sec")
+    assert config.ROS.output.degraded_pose_covariance_scale == 10.0
 
 
 @pytest.mark.parametrize("modality", ["thermal", "rgb"])
@@ -239,21 +271,9 @@ def test_profiles_define_health_limits(modality):
     assert health.watchdog_rate_hz == 10.0
 
 
-def test_imu_window_rejects_internal_gap():
-    samples = [make_imu_sample(value) for value in (0, 10_000_000, 1_390_000_000)]
-    with pytest.raises(ImuContinuityError, match="sample gap is too large"):
-        validate_imu_window(samples, 1_400_000_000, 0.03, 0.03)
-
-
-def test_imu_window_rejects_stale_camera_coverage():
-    samples = [make_imu_sample(value) for value in (0, 10_000_000, 20_000_000)]
-    with pytest.raises(ImuContinuityError, match="does not cover camera frame"):
-        validate_imu_window(samples, 100_000_000, 0.03, 0.03)
-
-
 @pytest.mark.parametrize("modality,topic_prefix", [("thermal", "/thermal_"), ("rgb", "/multisense/")])
 def test_ros_node_selects_camera_and_builds_frame(monkeypatch, modality, topic_prefix):
-    system = Mock(imu_initcond=None, lost_track=False)
+    system = mock_system()
     factory = Mock(return_value=system)
     monkeypatch.setattr(MACVIO, "from_config", factory)
     rclpy.init(args=["--ros-args", "-p", f"modality:={modality}"])
@@ -264,7 +284,7 @@ def test_ros_node_selects_camera_and_builds_frame(monkeypatch, modality, topic_p
         assert sum(subscription.topic_name.startswith(topic_prefix) for subscription in node.subscriptions) == 2
         assert any(subscription.topic_name == "/novatel/imu/data" for subscription in node.subscriptions)
         sample = ImuSample(1, (0, 0, 9.80665), (0, 0, 0), (0,) * 9, (0,) * 9, "novatel/imu_frame")
-        monkeypatch.setattr(node, "_imu_samples_for_frame", lambda _: [sample])
+        monkeypatch.setattr(node, "_imu_samples_for_frame", lambda _: ([sample], 0.0))
         height, width = node.camera_mask.shape[-2:]
         message = Image(height=height, width=width, encoding="mono8", step=width,
                         data=np.zeros((height, width), dtype=np.uint8).tobytes())
@@ -285,7 +305,7 @@ def mocked_node(monkeypatch):
     systems = []
 
     def factory(_config):
-        systems.append(Mock(imu_initcond=None, lost_track=False))
+        systems.append(mock_system())
         return systems[-1]
 
     monkeypatch.setattr(MACVIO, "from_config", Mock(side_effect=factory))
@@ -311,31 +331,66 @@ def last_status(node):
     return {} if call is None else json.loads(call.args[0].data)
 
 
-def test_imu_continuity_error_resets_instead_of_stopping(mocked_node, monkeypatch):
-    node, systems = mocked_node
-    node._imu_buffer.append(make_imu_sample(1))
-    node._imu_boundary = make_imu_sample(1)
-    node._last_frame_ns = 5
-    node._last_stamp_ns = 5
+def test_imu_windows_chain_without_repeats(mocked_node):
+    node, _ = mocked_node
+    node._imu_buffer.extend(make_imu_sample(value) for value in range(0, 60, 10))
 
-    def fail(*_):
-        raise ImuContinuityError("IMU sample gap is too large", 1.06)
+    def window(frame_ns):
+        samples, gap = node._imu_samples_for_frame(frame_ns)
+        if samples:
+            node._advance_imu_boundary(samples[-1], resend=node._last_frame_ns is None)
+        node._last_frame_ns = frame_ns
+        return [sample.time_ns for sample in samples], gap
 
-    monkeypatch.setattr(node, "_process_stereo", fail)
-    node._receive_stereo(Image(), Image())
-    wait_until(lambda: last_status(node).get("reset_count") == 1
-               and last_status(node)["state"] == "INITIALIZING")
+    assert window(15) == ([10], 0.0)
+    assert window(35) == ([10, 20, 30], pytest.approx(1e-8))
+    assert window(45) == ([40], pytest.approx(1e-8))
+    assert window(48) == ([], 0.0)
+    node._imu_buffer.append(make_imu_sample(100))
+    assert window(105) == ([50, 100], pytest.approx(5e-8))
 
-    status = last_status(node)
-    assert not node._stop_event.is_set()
-    assert len(systems) == 2 and node.system is systems[1]
-    systems[0].terminate.assert_called_once()
-    assert status["last_reset_reason"].startswith("ImuContinuityError")
-    assert status["last_reset_frame_stamp_ns"] == 5
-    assert status["imu_gap_count"] == 1
-    assert status["largest_imu_gap_sec"] == pytest.approx(1.06)
-    assert node._imu_boundary is None and node._last_frame_ns is None
-    assert len(node._imu_buffer) == 0
+
+@pytest.mark.parametrize("count", [0, 1, 3])
+def test_imu_data_supports_short_windows(mocked_node, count):
+    node, _ = mocked_node
+    samples = [make_imu_sample(value * 10_000_000) for value in range(count)]
+    imu = node._make_imu_data(samples)
+    assert imu.time_ns.shape == (1, count, 1)
+    assert imu.acc_ws.shape == imu.gyro_ws.shape == (1, count, 3)
+    assert imu.acc_cov.shape == imu.gyro_cov.shape == (1, count, 3, 3)
+    assert imu.num_samples == count
+
+
+def test_stale_imu_does_not_delay_frames(mocked_node):
+    node, _ = mocked_node
+    node._imu_buffer.append(make_imu_sample(10))
+    node._last_imu_arrival = time.monotonic() - 1.0
+    started = time.monotonic()
+    assert node._imu_samples_for_frame(1_000_000_000)[0][0].time_ns == 10
+    assert time.monotonic() - started < 0.02
+
+
+def test_fresh_imu_wait_stops_once_imu_goes_stale(mocked_node):
+    node, _ = mocked_node
+    node._imu_buffer.append(make_imu_sample(10))
+    node._last_imu_arrival = time.monotonic()
+    started = time.monotonic()
+    node._imu_samples_for_frame(1_000_000_000)
+    elapsed = time.monotonic() - started
+    assert node.imu_jitter_sec * 0.8 < elapsed < node.imu_wait_timeout
+
+
+def test_non_finite_imu_samples_are_rejected(mocked_node):
+    node, _ = mocked_node
+    message = Imu()
+    message.header.stamp.nanosec = 10
+    message.linear_acceleration.x = float("nan")
+    node._receive_imu(message)
+    message.linear_acceleration.x = 0.0
+    node._receive_imu(message)
+    node._receive_imu(message)
+    assert [sample.time_ns for sample in node._imu_buffer] == [10]
+    assert node._imu_samples_rejected == 2
 
 
 def test_unexpected_error_stops_with_error_state(mocked_node, monkeypatch):
@@ -365,9 +420,12 @@ def test_status_reports_liveness_fields(mocked_node):
         "state", "reset_count", "last_reset_reason", "last_reset_stamp",
         "imu_age_ms", "cam_age_ms", "frames_received", "frames_processed",
         "frames_dropped", "imu_gap_count", "initialized", "lost_track",
+        "vio_mode", "frames_in_mode", "last_gap_s", "n_chain_breaks",
+        "n_dropped_samples", "imu_samples_rejected",
     ):
         assert key in status
     assert status["state"] == "INITIALIZING"
+    assert status["vio_mode"] == "PRE_INIT"
 
 
 def test_rebuild_reuses_tracker_networks():
@@ -387,4 +445,6 @@ def test_rebuild_reuses_tracker_networks():
     assert system.FeatureTracker.last_depth is None
     assert tracker.prev is not None
     assert system.imu_initcond is None and len(system.Map.body) == 0
+    assert system.vio_status == idle_vio_status()
+    assert system.IMUChain.preintegrator is system.IMUPreintegrator
 

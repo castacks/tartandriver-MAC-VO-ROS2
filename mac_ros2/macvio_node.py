@@ -52,9 +52,16 @@ from Src.Module.Process import (  # noqa: E402
 )
 from Src.Odometry.MACVIO import MACVIO  # noqa: E402
 from Src.Utility.Config import load_config  # noqa: E402
+from Src.Utility.Enum import VIOMode  # noqa: E402
 from Src.Utility.Math.IMUMath import (  # noqa: E402
     noise_density_to_sample_covariance,
 )
+
+
+DEGRADED_MODES = frozenset(
+    {VIOMode.VO_FALLBACK, VIOMode.RECOVERING, VIOMode.IMU_DEAD}
+)
+UNKNOWN_TWIST_VARIANCE = 1.0e6
 
 
 def load_macvio_config(
@@ -147,59 +154,17 @@ class ImuSample:
     frame_id: str
 
 
-class ImuContinuityError(RuntimeError):
-    """The IMU stream cannot support preintegration to a camera frame."""
-
-    def __init__(self, message: str, gap_sec: float) -> None:
-        super().__init__(message)
-        self.gap_sec = gap_sec
-
-
 def validate_imu_window(
-    samples: list[ImuSample],
-    frame_ns: int,
-    max_sample_gap_sec: float,
-    max_camera_offset_sec: float,
+    samples: list[ImuSample], previous_ns: int | None
 ) -> float:
-    """Validate temporal coverage and return the largest observed gap."""
-    if not samples:
-        raise ImuContinuityError("IMU window is empty", float("inf"))
-
-    max_sample_gap_ns = int(max_sample_gap_sec * 1e9)
-    max_camera_offset_ns = int(max_camera_offset_sec * 1e9)
-    largest_gap_ns = 0
-    for previous, current in zip(samples, samples[1:]):
-        gap_ns = current.time_ns - previous.time_ns
-        if gap_ns <= 0:
-            raise ImuContinuityError(
-                "IMU timestamps are not strictly increasing: "
-                f"{previous.time_ns} -> {current.time_ns}",
-                gap_ns / 1e9,
-            )
-        largest_gap_ns = max(largest_gap_ns, gap_ns)
-        if gap_ns > max_sample_gap_ns:
-            raise ImuContinuityError(
-                "IMU sample gap is too large: "
-                f"{gap_ns / 1e9:.6f} s between {previous.time_ns} and "
-                f"{current.time_ns} (limit {max_sample_gap_sec:.6f} s)",
-                gap_ns / 1e9,
-            )
-
-    camera_offset_ns = frame_ns - samples[-1].time_ns
-    if camera_offset_ns < 0:
-        raise ImuContinuityError(
-            f"IMU window ends after camera frame {frame_ns}",
-            abs(camera_offset_ns) / 1e9,
-        )
-    if camera_offset_ns > max_camera_offset_ns:
-        raise ImuContinuityError(
-            "IMU does not cover camera frame: latest sample "
-            f"{samples[-1].time_ns}, camera {frame_ns}, offset "
-            f"{camera_offset_ns / 1e9:.6f} s "
-            f"(limit {max_camera_offset_sec:.6f} s)",
-            camera_offset_ns / 1e9,
-        )
-    return max(largest_gap_ns, camera_offset_ns) / 1e9
+    """Largest IMU sample spacing in seconds, including from the previous window."""
+    times = [sample.time_ns for sample in samples]
+    if previous_ns is not None:
+        times.insert(0, previous_ns)
+    gaps = [current - previous for previous, current in zip(times, times[1:])]
+    if any(gap <= 0 for gap in gaps):
+        raise ValueError(f"IMU timestamps are not strictly increasing: {times}")
+    return max(gaps, default=0) / 1e9
 
 
 class MacvioNode(Node):
@@ -231,27 +196,14 @@ class MacvioNode(Node):
         self.publish_before_initialized = bool(
             ros_cfg.output.publish_before_initialized
         )
+        self.degraded_pose_covariance_scale = float(
+            ros_cfg.output.degraded_pose_covariance_scale
+        )
+        if self.degraded_pose_covariance_scale < 1.0:
+            raise ValueError("degraded_pose_covariance_scale must be >= 1")
         self.imu_wait_timeout = float(ros_cfg.sync.imu_wait_timeout_sec)
+        self.imu_jitter_sec = float(cfg.Odometry.imu_health.jitter_max_ms) / 1e3
         self.nominal_imu_dt = 1.0 / float(ros_cfg.imu.nominal_rate_hz)
-        self.max_imu_sample_gap_sec = float(
-            getattr(
-                ros_cfg.sync,
-                "max_imu_sample_gap_sec",
-                3.0 * self.nominal_imu_dt,
-            )
-        )
-        self.max_imu_camera_offset_sec = float(
-            getattr(
-                ros_cfg.sync,
-                "max_imu_camera_offset_sec",
-                3.0 * self.nominal_imu_dt,
-            )
-        )
-        if (
-            self.max_imu_sample_gap_sec <= 0.0
-            or self.max_imu_camera_offset_sec <= 0.0
-        ):
-            raise ValueError("IMU continuity limits must be positive")
         self.use_message_covariance = bool(ros_cfg.imu.use_message_covariance)
         self.acc_noise_density = torch.tensor(
             ros_cfg.imu.acc_noise_density, dtype=torch.float64
@@ -291,6 +243,8 @@ class MacvioNode(Node):
             maxlen=int(ros_cfg.sync.imu_buffer_size)
         )
         self._imu_boundary: ImuSample | None = None
+        self._imu_resend_boundary = False
+        self._last_imu_arrival: float | None = None
         self._last_frame_ns: int | None = None
         self._warned_imu_frame = False
 
@@ -309,6 +263,7 @@ class MacvioNode(Node):
         self._last_stamp_ns = 0
         self._imu_gap_count = 0
         self._largest_imu_gap_sec = 0.0
+        self._imu_samples_rejected = 0
 
         self.imu_subscription = self.create_subscription(
             Imu,
@@ -395,14 +350,22 @@ class MacvioNode(Node):
             ),
             frame_id=message.header.frame_id,
         )
+        finite = np.isfinite(
+            [*sample.acceleration, *sample.angular_velocity]
+        ).all()
         with self._imu_condition:
-            if (
-                self._imu_buffer
-                and sample.time_ns <= self._imu_buffer[-1].time_ns
-            ):
-                return
-            self._imu_buffer.append(sample)
-            self._imu_condition.notify_all()
+            accepted = finite and (
+                not self._imu_buffer
+                or sample.time_ns > self._imu_buffer[-1].time_ns
+            )
+            if accepted:
+                self._imu_buffer.append(sample)
+                self._last_imu_arrival = time.monotonic()
+                self._imu_condition.notify_all()
+        if not accepted:
+            with self._state_lock:
+                self._imu_samples_rejected += 1
+            return
         with self._state_lock:
             self._health.record_imu(self._now_ns())
 
@@ -450,16 +413,7 @@ class MacvioNode(Node):
                     if self._health.blind_fault:
                         self._frames_dropped += 1
                         continue
-                try:
-                    self._process_stereo(*pair)
-                except ImuContinuityError as error:
-                    with self._state_lock:
-                        self._frames_dropped += 1
-                        self._imu_gap_count += 1
-                        self._largest_imu_gap_sec = max(
-                            self._largest_imu_gap_sec, error.gap_sec
-                        )
-                    self._reset_system(f"{type(error).__name__}: {error}")
+                self._process_stereo(*pair)
             except Exception as error:
                 self._fail(error)
 
@@ -499,6 +453,7 @@ class MacvioNode(Node):
         with self._imu_condition:
             self._imu_buffer.clear()
             self._imu_boundary = None
+            self._imu_resend_boundary = False
         self._last_frame_ns = None
         while True:
             try:
@@ -545,11 +500,8 @@ class MacvioNode(Node):
         if self._last_frame_ns is not None and frame_ns <= self._last_frame_ns:
             raise ValueError("stereo timestamps must increase monotonically")
 
-        samples = self._imu_samples_for_frame(frame_ns)
-        if samples is None:
-            with self._state_lock:
-                self._frames_dropped += 1
-            return
+        first_frame = self._last_frame_ns is None
+        samples, largest_gap = self._imu_samples_for_frame(frame_ns)
 
         left_image = self._image_to_tensor(left)
         right_image = self._image_to_tensor(right)
@@ -596,68 +548,70 @@ class MacvioNode(Node):
 
         self.system.run(frame)
         self._last_frame_ns = frame_ns
-        self._advance_imu_boundary(samples[-1])
+        if samples:
+            self._advance_imu_boundary(samples[-1], resend=first_frame)
         initialized = self.system.imu_initcond is not None
+        degraded = self.system.vio_mode in DEGRADED_MODES
         with self._state_lock:
             self._frames_processed += 1
             self._last_stamp_ns = frame_ns
             self._last_error = ""
-            self._health.record_frame(initialized=initialized, degraded=False)
+            if largest_gap > self.imu_jitter_sec:
+                self._imu_gap_count += 1
+            self._largest_imu_gap_sec = max(self._largest_imu_gap_sec, largest_gap)
+            self._health.record_frame(initialized=initialized, degraded=degraded)
             publish = self._health.publishing_allowed()
 
         if publish and (initialized or self.publish_before_initialized):
-            self._publish_odometry(left.header.stamp)
+            self._publish_odometry(left.header.stamp, degraded)
         self._publish_status()
 
-    def _imu_samples_for_frame(self, frame_ns: int) -> list[ImuSample] | None:
+    def _imu_samples_for_frame(
+        self, frame_ns: int
+    ) -> tuple[list[ImuSample], float]:
+        """Return the frame's IMU window (may be empty) and its largest sample gap.
+
+        Waits for late samples only while the IMU is fresh. MACVIO expects the second
+        window of an instance to resend the first window's single sample.
+        """
         deadline = time.monotonic() + self.imu_wait_timeout
         with self._imu_condition:
             while (
                 not self._stop_event.is_set()
+                and self._last_imu_arrival is not None
                 and (
                     not self._imu_buffer
                     or self._imu_buffer[-1].time_ns < frame_ns
                 )
             ):
-                remaining = deadline - time.monotonic()
+                fresh_until = self._last_imu_arrival + self.imu_jitter_sec
+                remaining = min(deadline, fresh_until) - time.monotonic()
                 if remaining <= 0.0:
                     break
                 self._imu_condition.wait(timeout=remaining)
 
-            available = [
-                sample
-                for sample in self._imu_buffer
-                if sample.time_ns <= frame_ns
-            ]
-            if not available:
-                return None
+            boundary = self._imu_boundary
+            if boundary is None:
+                window = [
+                    sample for sample in self._imu_buffer
+                    if sample.time_ns <= frame_ns
+                ][-1:]
+                previous_ns = None
+            else:
+                window = [
+                    sample for sample in self._imu_buffer
+                    if boundary.time_ns < sample.time_ns <= frame_ns
+                ]
+                previous_ns = boundary.time_ns
+                if self._imu_resend_boundary:
+                    window.insert(0, boundary)
+                    previous_ns = None
+        return window, validate_imu_window(window, previous_ns)
 
-            if self._imu_boundary is None:
-                return [available[-1]]
-
-            if available[0].time_ns > self._imu_boundary.time_ns:
-                raise ImuContinuityError(
-                    "IMU buffer lost the previous camera boundary sample",
-                    (available[0].time_ns - self._imu_boundary.time_ns) / 1e9,
-                )
-            interval = [
-                sample
-                for sample in available
-                if sample.time_ns >= self._imu_boundary.time_ns
-            ]
-            if len(interval) < 2:
-                return None
-            validate_imu_window(
-                interval,
-                frame_ns,
-                self.max_imu_sample_gap_sec,
-                self.max_imu_camera_offset_sec,
-            )
-            return interval
-
-    def _advance_imu_boundary(self, boundary: ImuSample) -> None:
+    def _advance_imu_boundary(self, boundary: ImuSample, resend: bool) -> None:
         with self._imu_condition:
             self._imu_boundary = boundary
+            self._imu_resend_boundary = resend
             while (
                 len(self._imu_buffer) > 1
                 and self._imu_buffer[1].time_ns <= boundary.time_ns
@@ -665,24 +619,25 @@ class MacvioNode(Node):
                 self._imu_buffer.popleft()
 
     def _make_imu_data(self, samples: list[ImuSample]) -> IMUData:
+        count = len(samples)
         timestamps = torch.tensor(
-            [[[sample.time_ns] for sample in samples]], dtype=torch.long
-        )
+            [sample.time_ns for sample in samples], dtype=torch.long
+        ).reshape(1, count, 1)
         acceleration = torch.tensor(
-            [[sample.acceleration for sample in samples]], dtype=torch.float64
-        )
+            [sample.acceleration for sample in samples], dtype=torch.float64
+        ).reshape(1, count, 3)
         angular_velocity = torch.tensor(
-            [[sample.angular_velocity for sample in samples]],
+            [sample.angular_velocity for sample in samples],
             dtype=torch.float64,
-        )
+        ).reshape(1, count, 3)
 
-        if len(samples) > 1:
+        if count > 1:
             delta_t = (
                 timestamps[0, 1:, 0] - timestamps[0, :-1, 0]
             ).double() / 1e9
             delta_t = torch.cat([delta_t, delta_t[-1:]])
         else:
-            delta_t = torch.tensor([self.nominal_imu_dt], dtype=torch.float64)
+            delta_t = torch.full((count,), self.nominal_imu_dt, dtype=torch.float64)
 
         acceleration_covariance = self._sample_covariances(
             samples,
@@ -759,7 +714,7 @@ class MacvioNode(Node):
                 image = image[:, :, ::-1]
         return torch.from_numpy(np.ascontiguousarray(image)).permute(2, 0, 1)
 
-    def _publish_odometry(self, stamp: Any) -> None:
+    def _publish_odometry(self, stamp: Any, degraded: bool) -> None:
         map_data = self.system.Map
         pose = map_data.body.data["pose"][-1].detach().cpu().double()
         pose_covariance = (
@@ -768,26 +723,41 @@ class MacvioNode(Node):
         velocity_sensor = (
             map_data.imu.data["v_Tbs"][-1].detach().cpu().double()
         )
+        velocity_covariance = (
+            map_data.imu.data["v_covTb"][-1].detach().cpu().double()
+        )
         angular_velocity = (
             map_data.imu.data["\u03c9_Tbs"][-1].detach().cpu().double()
         )
         imu_t_bs = pp.SE3(
             map_data.imu.data["T_BS"][-1].detach().cpu().double()
         )
-        velocity_body = velocity_sensor - torch.cross(
-            angular_velocity, imu_t_bs.translation(), dim=0
-        )
 
-        if not all(
-            torch.isfinite(value).all()
-            for value in (
-                pose,
-                pose_covariance,
-                velocity_body,
-                angular_velocity,
-            )
+        if not (
+            torch.isfinite(pose).all() and torch.isfinite(pose_covariance).all()
         ):
-            raise ValueError("MACVIO produced non-finite odometry")
+            raise ValueError("MACVIO produced a non-finite pose")
+        if degraded:
+            pose_covariance = pose_covariance * self.degraded_pose_covariance_scale
+
+        # Unknown twist (NaN in VO fallback) is published as zero with UNKNOWN_TWIST_VARIANCE.
+        twist_covariance = torch.zeros((6, 6), dtype=torch.float64)
+        angular_known = bool(torch.isfinite(angular_velocity).all())
+        linear_known = angular_known and bool(
+            torch.isfinite(velocity_sensor).all()
+            and torch.isfinite(velocity_covariance).all()
+        )
+        if linear_known:
+            velocity_body = velocity_sensor - torch.cross(
+                angular_velocity, imu_t_bs.translation(), dim=0
+            )
+            twist_covariance[:3, :3] = velocity_covariance
+        else:
+            velocity_body = torch.zeros(3, dtype=torch.float64)
+            twist_covariance[:3, :3] = UNKNOWN_TWIST_VARIANCE * torch.eye(3)
+        if not angular_known:
+            angular_velocity = torch.zeros(3, dtype=torch.float64)
+            twist_covariance[3:, 3:] = UNKNOWN_TWIST_VARIANCE * torch.eye(3)
 
         message = Odometry()
         message.header.stamp = stamp
@@ -807,11 +777,6 @@ class MacvioNode(Node):
         message.twist.twist.angular.x = float(angular_velocity[0])
         message.twist.twist.angular.y = float(angular_velocity[1])
         message.twist.twist.angular.z = float(angular_velocity[2])
-
-        twist_covariance = torch.zeros((6, 6), dtype=torch.float64)
-        twist_covariance[:3, :3] = (
-            map_data.imu.data["v_covTb"][-1].detach().cpu().double()
-        )
         message.twist.covariance = twist_covariance.reshape(-1).tolist()
         self.odom_publisher.publish(message)
 
@@ -827,9 +792,15 @@ class MacvioNode(Node):
 
     def _publish_status(self) -> None:
         system = self.system
+        vio = system.vio_status
         with self._state_lock:
             payload = {
                 **self._health.status_fields(self._now_ns()),
+                "vio_mode": vio.mode.name,
+                "frames_in_mode": vio.frames_in_mode,
+                "last_gap_s": vio.last_gap_s,
+                "n_chain_breaks": vio.n_chain_breaks,
+                "n_dropped_samples": vio.n_dropped_samples,
                 "modality": self.modality,
                 "config_file": self.config_file,
                 "experiment_file": self.experiment_file,
@@ -841,6 +812,7 @@ class MacvioNode(Node):
                 "frames_ignored_after_stop": self._frames_ignored_after_stop,
                 "imu_gap_count": self._imu_gap_count,
                 "largest_imu_gap_sec": self._largest_imu_gap_sec,
+                "imu_samples_rejected": self._imu_samples_rejected,
                 "last_stamp_ns": self._last_stamp_ns,
                 "last_error": self._last_error,
             }

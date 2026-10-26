@@ -28,16 +28,16 @@ ROS:
   output:
     publish_tf: true
     publish_before_initialized: false
+    # Pose covariance multiplier while MACVIO tracks visual-only (DEGRADED).
+    degraded_pose_covariance_scale: 10.0
 
   sync:
     stereo_queue_size: 5
     stereo_slop_sec: 0.02
     stereo_work_queue_size: 2
     imu_buffer_size: 4096
+    # Upper bound on waiting for late IMU; no wait once the IMU is older than imu_health.jitter_max_ms.
     imu_wait_timeout_sec: 0.25
-    # Larger gaps or offsets reset MACVIO; clean 100 Hz data has gaps up to 44 ms.
-    max_imu_sample_gap_sec: 0.05
-    max_imu_camera_offset_sec: 0.05
 
   health:
     watchdog_rate_hz: 10.0
