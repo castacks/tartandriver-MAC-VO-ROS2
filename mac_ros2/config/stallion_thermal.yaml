@@ -1,0 +1,36 @@
+# Stallion thermal: PNG mono16 pair rectified in the node; topics resolve under the crl_rzr namespace
+# Estimator: the Yamaha RGB tuning until a Stallion one exists
+platform: stallion
+modality: thermal
+rect_mode: stereo_rect
+macslam_config: Config/Experiment/MACVIO/Offroad/VIO_MACI2_FR_Yamaha_RGB.yaml
+image_transport: compressed
+
+topics:
+  image_left: multisense_thermal_front/left/image_mono/compressed
+  image_right: multisense_thermal_front/right/image_mono/compressed
+  imu: microstrain/nav/filtered_imu/data
+  odometry: macvio/odometry
+  status: macvio/status
+
+frames:
+  odom: crl_rzr/macvio_odom
+  base: crl_rzr/base_link
+  # Distinct from base so the adapter stays the only TF parent of base
+  tf_base: crl_rzr/macvio_base_link
+
+sync:
+  stereo_queue_size: 5
+  stereo_slop_s: 0.02
+  work_queue_size: 2
+
+imu:
+  buffer_capacity: 16384
+  wait_timeout_s: 0.25
+  clock_silence_s: 0.1
+
+errors:
+  max_consecutive_bad_inputs: 10
+
+output:
+  fd_twist_variance: 1.0

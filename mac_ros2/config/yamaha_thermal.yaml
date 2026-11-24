@@ -1,0 +1,35 @@
+# Yamaha thermal: raw 16-bit images rectified in the node (stereo_rect)
+platform: yamaha
+modality: thermal
+rect_mode: stereo_rect
+macslam_config: Config/Experiment/MACVIO/Offroad/VIO_MACI2_FR_Yamaha_Thermal.yaml
+image_transport: raw
+
+topics:
+  image_left: thermal_left/image
+  image_right: thermal_right/image
+  imu: novatel/imu/data
+  odometry: macvio/odometry
+  status: macvio/status
+
+frames:
+  odom: macvio_odom
+  base: vehicle
+  # Distinct from base so the adapter stays the only TF parent of base
+  tf_base: macvio_vehicle
+
+sync:
+  stereo_queue_size: 5
+  stereo_slop_s: 0.02
+  work_queue_size: 2
+
+imu:
+  buffer_capacity: 4096
+  wait_timeout_s: 0.25
+  clock_silence_s: 0.1
+
+errors:
+  max_consecutive_bad_inputs: 10
+
+output:
+  fd_twist_variance: 1.0

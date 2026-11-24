@@ -19,12 +19,18 @@ from Src.Utility.Math.IMUMath import noise_density_to_sample_covariance  # noqa:
 class IMUSpecLike(Protocol):
     """IMU noise model and gap bracket of one rig; the body frame is the IMU frame."""
 
-    acc_noise_density: float   # m/s^2/sqrt(Hz)
-    gyro_noise_density: float  # rad/s/sqrt(Hz)
-    acc_random_walk: float     # m/s^3/sqrt(Hz)
-    gyro_random_walk: float    # rad/s^2/sqrt(Hz)
-    gravity: torch.Tensor | Sequence[float]  # world frame, signed
-    max_bracket_ns: int        # wider sample spacing around a frame time is an IMU gap
+    @property
+    def acc_noise_density(self) -> float: ...   # m/s^2/sqrt(Hz)
+    @property
+    def gyro_noise_density(self) -> float: ...  # rad/s/sqrt(Hz)
+    @property
+    def acc_random_walk(self) -> float: ...     # m/s^3/sqrt(Hz)
+    @property
+    def gyro_random_walk(self) -> float: ...    # rad/s^2/sqrt(Hz)
+    @property
+    def gravity(self) -> torch.Tensor | Sequence[float]: ...  # world frame, signed
+    @property
+    def max_bracket_ns(self) -> int: ...        # wider sample spacing around a frame time is an IMU gap
 
 
 @dataclass(frozen=True)
