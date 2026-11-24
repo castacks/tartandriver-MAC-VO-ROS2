@@ -63,6 +63,7 @@ Odometry:
       args:
         max_depth: 40.0
         max_depth_cov: 5.0
+        max_flow_cov: null
         mask_width: 32
 
     frontend:
