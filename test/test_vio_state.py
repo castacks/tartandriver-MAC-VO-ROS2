@@ -185,9 +185,29 @@ def test_threshold_is_three_frame_periods(rate_hz, threshold_ns):
 
 def test_detector_ignores_out_of_order_pairs():
     detector = CameraDropoutDetector(FPS)
-    detector.on_pair(T0)
-    detector.on_pair(T0 - 500 * MS)
-    assert detector.last_pair_ns == T0 and not detector.awaiting_optimized
+    detector.on_pair(T0, T0)
+    detector.on_pair(T0 - 500 * MS, T0 + 10 * MS)
+    assert detector.last_pair_ns == T0 and detector.last_arrival_ns == T0 and not detector.awaiting_optimized
+
+
+def test_camera_latency_is_not_a_dropout():
+    """Stallion: 14 Hz pairs arrive 150 ms after their stamp while the IMU is 13 ms behind."""
+    m = VioStateMachine(14.0, SILENCE)
+    period, latency = int(1e9 / 14.0), 150 * MS
+    states, imu = [], T0
+    for k in range(60):
+        t = T0 + k * period
+        while imu <= t + latency:
+            states.append(m.on_imu(imu, imu))
+            imu += 2 * MS
+        states.append(m.on_pair(t, t + latency))
+        states.append(m.on_frame(frame(t), t + latency))
+    assert set(states[states.index(VioState.TRACKING):]) == {VioState.TRACKING}
+    assert m.status(T0 + 60 * period)["n_camera_dropouts"] == 0
+
+    last_arrival = imu - 2 * MS
+    assert m.on_imu(last_arrival + 214 * MS, last_arrival + 214 * MS) is VioState.TRACKING
+    assert m.on_imu(last_arrival + 215 * MS, last_arrival + 215 * MS) is VioState.CAMERA_DROPOUT
 
 
 def test_sensor_clock_tracks_newest_stamp_until_all_streams_are_silent():

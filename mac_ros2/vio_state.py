@@ -77,19 +77,21 @@ class SensorClock:
 
 
 class CameraDropoutDetector:
-    """Flags received stereo gaps longer than three frame periods, live and retroactively."""
+    """Flags stereo gaps longer than three frame periods: live when no pair arrives for that long, and from pair stamps."""
 
     def __init__(self, frame_rate_hz: float) -> None:
         self.threshold_ns = int(3e9 / frame_rate_hz)
         self.last_pair_ns: int | None = None
+        self.last_arrival_ns: int | None = None  # sensor clock when the newest pair arrived
         self.dropout = False
         self.awaiting_optimized = False
         self.gap_end_ns: int | None = None  # first pair received after the latest gap
         self.n_dropouts = 0
 
-    def on_pair(self, stamp_ns: int) -> None:
+    def on_pair(self, stamp_ns: int, arrival_ns: int) -> None:
         if self.last_pair_ns is not None and stamp_ns <= self.last_pair_ns:
             return
+        self.last_arrival_ns = arrival_ns
         long_gap = self.last_pair_ns is not None and stamp_ns - self.last_pair_ns > self.threshold_ns
         if long_gap and not self.dropout:
             self._start_dropout()
@@ -99,10 +101,10 @@ class CameraDropoutDetector:
         self.dropout = False
 
     def update(self, sensor_now_ns: int | None) -> None:
-        """Live check against the sensor clock."""
-        if self.last_pair_ns is None or sensor_now_ns is None or self.dropout:
+        """Live check on the sensor clock; arrival-based, so camera transport latency doesn't count as a gap."""
+        if self.last_arrival_ns is None or sensor_now_ns is None or self.dropout:
             return
-        if sensor_now_ns - self.last_pair_ns > self.threshold_ns:
+        if sensor_now_ns - self.last_arrival_ns > self.threshold_ns:
             self._start_dropout()
             self.dropout = True
 
@@ -151,7 +153,9 @@ class VioStateMachine:
         with self._lock:
             self.frames_received += 1
             self._clock.on_pair(stamp_ns, ros_now_ns)
-            self._camera.on_pair(stamp_ns)
+            arrival_ns = self._clock.now(ros_now_ns)
+            assert arrival_ns is not None
+            self._camera.on_pair(stamp_ns, arrival_ns)
             return self._evaluate(ros_now_ns)
 
     def on_frame(self, result: FrameResult, ros_now_ns: int) -> VioState:

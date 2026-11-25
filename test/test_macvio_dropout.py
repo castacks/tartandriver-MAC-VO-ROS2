@@ -267,7 +267,8 @@ def test_camera_dropout_holds_until_first_optimized_frame():
     ]
     last_pair = CAMERA_GAP[0] - CAMERA_DT_NS
     detected = next(t for t, s in trace.events if s is VioState.CAMERA_DROPOUT)
-    assert detected == last_pair + 300 * MS + IMU_DT_NS
+    # The last pair arrives with the sensor clock one IMU step past its stamp
+    assert detected == last_pair + IMU_DT_NS + 300 * MS + IMU_DT_NS
     assert all(trace.hold_at[t] for t in trace.hold_at if detected <= t <= CAMERA_GAP[1])
     assert not trace.hold_at[max(trace.hold_at)]
 
