@@ -9,7 +9,7 @@ import pytest
 import yaml
 
 from mac_ros2.macvio_profile import PROFILE_DIR, load_profile, parse_profile
-from mac_ros2.macvio_runner import load_experiment
+from mac_ros2.macvio_runner import load_experiment, split_preprocess
 from Src.DataLoader import get_rig
 
 PROFILES = ("yamaha_thermal", "yamaha_rgb", "stallion_thermal", "stallion_rgb")
@@ -31,7 +31,8 @@ def test_profile_loads_its_experiment_and_preprocess_chain(name):
     assert profile.name == name and profile.macslam_config.name == EXPERIMENTS[name]
     rig = get_rig(profile.platform, profile.modality, profile.rect_mode)
     experiment = load_experiment(profile)
-    assert hasattr(experiment.Preprocess, rig.preprocess_key)
+    image, imu = split_preprocess(getattr(experiment.Preprocess, rig.preprocess_key))
+    assert image and [type(t).__name__ for t in imu] == ["IMUSpecOverrideTransform"]
 
 
 def test_profile_by_path_equals_profile_by_name():
@@ -57,7 +58,21 @@ def test_topics_are_relative_and_match_the_bags():
     assert topics["stallion_rgb"].image_right == "multisense_front/right/image_rect/compressed"
     assert {t.imu for t in topics.values()} == {"novatel/imu/data", "microstrain/nav/filtered_imu/data"}
     for t in topics.values():
-        assert t.odometry == "macvio/odometry_raw" and t.status == "macvio/status"
+        assert (t.odometry, t.status, t.map_points) == ("macvio/odometry_raw", "macvio/status", "macvio/map_points")
+
+
+@pytest.mark.parametrize("name,image,camera_info,optical", [
+    ("yamaha_thermal", "thermal_left/image_processed", "thermal_left/camera_info", "thermal_left/optical_frame"),
+    ("stallion_thermal", "multisense_thermal_front/left/image_processed", "multisense_thermal_front/left/camera_info",
+     "crl_rzr/multisense_thermal_front/left_camera_frame"),
+    ("yamaha_rgb", None, None, None),
+    ("stallion_rgb", None, None, None),
+])
+def test_processed_image_outputs(name, image, camera_info, optical):
+    profile = load_profile(name)
+    assert profile.publish_processed_image == (image is not None)
+    assert (profile.topics.processed_image, profile.topics.processed_camera_info) == (image, camera_info)
+    assert profile.frames.camera_optical == optical
 
 
 def test_stallion_imu_buffer_covers_its_500hz_imu():
@@ -85,6 +100,10 @@ def test_thermal_rect_mode():
     (lambda r: r["sync"].pop("stereo_slop_s"), "missing"),
     (lambda r: r.update(Camera={"fx": 1.0}), "unknown"),
     (lambda r: r["frames"].update(tf_base="macvio_vehicle"), "unknown"),
+    (lambda r: r.update(publish_processed_image="yes"), "bool"),
+    (lambda r: r["topics"].update(processed_image=None), "relative"),
+    (lambda r: r["frames"].update(camera_optical=None), "camera_optical"),
+    (lambda r: r["sync"].update(front_queue_size=0), "positive"),
 ])
 def test_invalid_profiles_are_rejected(edit, match):
     raw = raw_profile("yamaha_thermal")

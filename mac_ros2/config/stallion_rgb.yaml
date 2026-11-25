@@ -5,6 +5,7 @@ modality: rgb
 rect_mode: null
 macslam_config: Config/Experiment/MACVIO/Offroad/VIO_MACI2_FR_Yamaha_RGB.yaml
 image_transport: compressed
+publish_processed_image: false
 
 topics:
   image_left: multisense_front/left/image_rect/compressed
@@ -12,14 +13,19 @@ topics:
   imu: microstrain/nav/filtered_imu/data
   odometry: macvio/odometry_raw
   status: macvio/status
+  map_points: macvio/map_points
+  processed_image: null
+  processed_camera_info: null
 
 frames:
   odom: crl_rzr/macvio_odom
   base: crl_rzr/base_link
+  camera_optical: null
 
 sync:
   stereo_queue_size: 5
   stereo_slop_s: 0.02
+  front_queue_size: 2
   work_queue_size: 2
 
 imu:

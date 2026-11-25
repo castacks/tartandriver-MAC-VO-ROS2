@@ -24,17 +24,21 @@ from std_msgs.msg import String  # noqa: E402
 
 from mac_ros2.localization_adapter_node import LocalizationAdapter  # noqa: E402
 from mac_ros2.localization_gate import LocalizationGate  # noqa: E402
-from mac_ros2.odometry_state import OdometryState  # noqa: E402
+from mac_ros2.odometry_state import MAP_POINT_FIELDS, MapPoints, OdometryState  # noqa: E402
 from mac_ros2.ros_messages import (  # noqa: E402
+    camera_info_message,
     compressed_array,
     diagnostic_status,
     image_array,
     imu_sample,
+    mono8_message,
     ns_to_stamp,
     odometry_message,
     odometry_state,
     parse_status,
+    point_cloud_message,
     stamp_to_ns,
+    static_rotation_message,
     status_message,
     transform_message,
 )
@@ -96,6 +100,44 @@ def test_odometry_round_trip_and_transform():
     transform = transform_message(message, "macvio_vehicle")
     assert transform.header.frame_id == "macvio_odom" and transform.child_frame_id == "macvio_vehicle"
     assert transform.transform.translation.x == 1.0 and transform.transform.rotation.w == pytest.approx(np.sqrt(0.5))
+
+
+def test_point_cloud_message_carries_every_map_point_field():
+    values = RNG.normal(size=(5, 15)).astype(np.float32)
+    message = point_cloud_message(MapPoints(stamp_ns=1_500_000_000, values=values), "crl_rzr/base_link")
+    assert stamp_to_ns(message.header.stamp) == 1_500_000_000 and message.header.frame_id == "crl_rzr/base_link"
+    assert [f.name for f in message.fields] == list(MAP_POINT_FIELDS)
+    assert (message.height, message.width, message.point_step, message.row_step) == (1, 5, 60, 300)
+    dtype = np.dtype({"names": [f.name for f in message.fields], "formats": ["<f4"] * 15,
+                      "offsets": [f.offset for f in message.fields]})
+    decoded = np.frombuffer(bytes(message.data), dtype=dtype)
+    np.testing.assert_array_equal(np.stack([decoded[name] for name in MAP_POINT_FIELDS], axis=1), values)
+    empty = point_cloud_message(MapPoints(stamp_ns=1, values=np.zeros((0, 15), np.float32)), "vehicle")
+    assert empty.width == 0 and len(empty.data) == 0
+
+
+def test_processed_image_and_camera_info_messages():
+    image = RNG.integers(0, 255, size=(4, 6), dtype=np.uint8)
+    message = mono8_message(7, "thermal_left/optical_frame_rect", image)
+    assert (message.encoding, message.step, message.header.frame_id) == ("mono8", 6, "thermal_left/optical_frame_rect")
+    np.testing.assert_array_equal(image_array(message), image)
+
+    K = np.array([[300.0, 0.0, 320.0], [0.0, 301.0, 256.0], [0.0, 0.0, 1.0]])
+    info = camera_info_message(7, "thermal_left/optical_frame_rect", 640, 512, K)
+    assert (info.width, info.height, stamp_to_ns(info.header.stamp)) == (640, 512, 7)
+    np.testing.assert_array_equal(np.reshape(info.k, (3, 3)), K)
+    np.testing.assert_array_equal(np.reshape(info.p, (3, 4))[:, :3], K)
+    assert not any(info.d) and not np.reshape(info.p, (3, 4))[:, 3].any()
+    np.testing.assert_array_equal(np.reshape(info.r, (3, 3)), np.eye(3))
+
+
+def test_static_rotation_message():
+    transform = static_rotation_message("thermal_left/optical_frame", "thermal_left/optical_frame_rect",
+                                        np.array([0.1, 0.2, 0.3, 0.9]))
+    assert (transform.header.frame_id, transform.child_frame_id) == (
+        "thermal_left/optical_frame", "thermal_left/optical_frame_rect")
+    r, t = transform.transform.rotation, transform.transform.translation
+    assert (r.x, r.y, r.z, r.w) == (0.1, 0.2, 0.3, 0.9) and (t.x, t.y, t.z) == (0.0, 0.0, 0.0)
 
 
 def test_status_json_round_trip():
@@ -215,11 +257,17 @@ def test_launch_stallion_pushes_its_namespace_and_maps_config_file():
     assert [a.node_executable for a in actions[1:]] == ["MACVIO", "localization_adapter"]
 
 
+RECT_ROTATION = np.array([0.0, 0.0, np.sqrt(0.5), np.sqrt(0.5)])
+
+
 class FakeRunner:
     """Stands in for `MacvioRunner`, whose mac_slam imports this test avoids."""
 
-    def __init__(self, profile: Any, *, now_ns: Any, on_odometry: Any, on_status: Any, log: Any) -> None:
+    def __init__(self, profile: Any, *, now_ns: Any, on_odometry: Any, on_status: Any, on_map_points: Any,
+                 on_processed_image: Any, log: Any) -> None:
         self.profile, self.on_odometry, self.on_status = profile, on_odometry, on_status
+        self.on_map_points, self.on_processed_image = on_map_points, on_processed_image
+        self.rect_rotation = RECT_ROTATION if profile.publish_processed_image else None
         self.calls: list[tuple[str, Any]] = []
         self.started = self.stopped = False
 
@@ -242,23 +290,39 @@ class FakeRunner:
         self.calls.append(("tick", now_ns))
 
 
+class FakeStaticBroadcaster:
+    sent: list[Any] = []
+
+    def __init__(self, _node: Any) -> None:
+        FakeStaticBroadcaster.sent = []
+
+    def sendTransform(self, transform: Any) -> None:
+        FakeStaticBroadcaster.sent.append(transform)
+
+
 @pytest.fixture
-def macvio_node(monkeypatch) -> Any:
+def macvio_node(monkeypatch, request) -> Any:
     fake = types.ModuleType("mac_ros2.macvio_runner")
     fake.MacvioRunner = FakeRunner
     monkeypatch.setitem(sys.modules, "mac_ros2.macvio_runner", fake)
     monkeypatch.delitem(sys.modules, "mac_ros2.macvio_node", raising=False)
     module = importlib.import_module("mac_ros2.macvio_node")
-    rclpy.init(args=["--ros-args", "-p", "profile:=stallion_thermal"])
+    monkeypatch.setattr(module, "StaticTransformBroadcaster", FakeStaticBroadcaster)
+    FakeStaticBroadcaster.sent = []
+    rclpy.init(args=["--ros-args", "-p", f"profile:={request.param}"])
     node = module.MacvioNode()
-    sent: dict[str, list[Any]] = {"odometry": [], "status": []}
-    node.odometry_pub.publish = sent["odometry"].append
-    node.status_pub.publish = sent["status"].append
+    sent: dict[str, list[Any]] = {"odometry": [], "status": [], "map_points": [], "image": [], "camera_info": [],
+                                  "static_tf": FakeStaticBroadcaster.sent}
+    for key in ("odometry", "status", "map_points", "image", "camera_info"):
+        publisher = getattr(node, f"{key}_pub")
+        if publisher is not None:
+            publisher.publish = sent[key].append
     yield node, sent
     node.destroy_node()
     rclpy.shutdown()
 
 
+@pytest.mark.parametrize("macvio_node", ["stallion_thermal"], indirect=True)
 def test_macvio_node_shell_wiring(macvio_node):
     node, sent = macvio_node
     runner = node.runner
@@ -288,5 +352,30 @@ def test_macvio_node_shell_wiring(macvio_node):
     odometry = sent["odometry"][-1]
     assert (odometry.header.frame_id, odometry.child_frame_id) == ("crl_rzr/macvio_odom", "crl_rzr/base_link")
     assert not hasattr(node, "tf_broadcaster")
+
+    runner.on_map_points(MapPoints(stamp_ns=1_000, values=np.zeros((3, 15), np.float32)))
+    cloud = sent["map_points"][-1]
+    assert cloud.header.frame_id == "crl_rzr/base_link" and cloud.width == 3 and stamp_to_ns(cloud.header.stamp) == 1_000
+
+    K = np.array([[600.0, 0.0, 320.0], [0.0, 600.0, 256.0], [0.0, 0.0, 1.0]])
+    runner.on_processed_image(1_000, np.zeros((512, 640), np.uint8), K)
+    rect = "crl_rzr/multisense_thermal_front/left_camera_frame_rect"
+    image, info = sent["image"][-1], sent["camera_info"][-1]
+    assert image.header.frame_id == info.header.frame_id == rect and (info.width, info.height) == (640, 512)
+    assert stamp_to_ns(image.header.stamp) == stamp_to_ns(info.header.stamp) == 1_000
+
+    (static,) = sent["static_tf"]
+    assert (static.header.frame_id, static.child_frame_id) == ("crl_rzr/multisense_thermal_front/left_camera_frame", rect)
+    assert static.transform.rotation.w == pytest.approx(RECT_ROTATION[3])
+
     published = {name for name, _ in node.get_publisher_names_and_types_by_node("macvio_node", "/")}
-    assert "/macvio/odometry_raw" in published and "/tf" not in published
+    assert {"/macvio/odometry_raw", "/macvio/status", "/macvio/map_points",
+            "/multisense_thermal_front/left/image_processed", "/multisense_thermal_front/left/camera_info"} <= published
+
+
+@pytest.mark.parametrize("macvio_node", ["yamaha_rgb"], indirect=True)
+def test_macvio_node_rgb_publishes_no_processed_image(macvio_node):
+    node, sent = macvio_node
+    assert node.image_pub is None and node.camera_info_pub is None and sent["static_tf"] == []
+    published = {name for name, _ in node.get_publisher_names_and_types_by_node("macvio_node", "/")}
+    assert "/macvio/map_points" in published and not any("image_processed" in name for name in published)

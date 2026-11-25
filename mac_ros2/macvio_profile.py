@@ -27,12 +27,16 @@ class ProfileTopics:
     imu: str
     odometry: str
     status: str
+    map_points: str
+    processed_image: str | None
+    processed_camera_info: str | None
 
 
 @dataclass(frozen=True, kw_only=True)
 class ProfileFrames:
     odom: str
     base: str
+    camera_optical: str | None  # raw left camera optical frame; processed images are in `<camera_optical>_rect`
 
 
 @dataclass(frozen=True, kw_only=True)
@@ -45,8 +49,10 @@ class MacvioProfile:
     image_transport: ImageTransport
     topics: ProfileTopics
     frames: ProfileFrames
+    publish_processed_image: bool
     stereo_queue_size: int
     stereo_slop_s: float
+    front_queue_size: int
     work_queue_size: int
     imu_buffer_capacity: int
     imu_wait_timeout_s: float
@@ -68,7 +74,7 @@ def load_profile(spec: str | Path) -> MacvioProfile:
 def parse_profile(raw: Mapping[str, Any], name: str) -> MacvioProfile:
     """Validate a profile mapping; raises ValueError on any unknown, missing or invalid field."""
     _keys(raw, {"platform", "modality", "rect_mode", "macslam_config", "image_transport",
-                "topics", "frames", "sync", "imu", "errors", "output"}, name)
+                "publish_processed_image", "topics", "frames", "sync", "imu", "errors", "output"}, name)
     platform = _choice(raw["platform"], Platform, "platform")
     modality = _choice(raw["modality"], Modality, "modality")
     rect_mode = raw["rect_mode"]
@@ -81,12 +87,21 @@ def parse_profile(raw: Mapping[str, Any], name: str) -> MacvioProfile:
     if not macslam_config.is_file():
         raise ValueError(f"{name}: macslam_config {macslam_config} does not exist")
 
-    topics = _section(raw, "topics", {"image_left", "image_right", "imu", "odometry", "status"}, name)
+    publish_processed_image = raw["publish_processed_image"]
+    if not isinstance(publish_processed_image, bool):
+        raise ValueError(f"{name}: publish_processed_image must be a bool, got {publish_processed_image!r}")
+    processed_keys = {"processed_image", "processed_camera_info"}
+    topics = _section(raw, "topics", {"image_left", "image_right", "imu", "odometry", "status", "map_points",
+                                      *processed_keys}, name)
     for key, topic in topics.items():
+        if topic is None and key in processed_keys and not publish_processed_image:
+            continue
         if not isinstance(topic, str) or not topic or topic.startswith("/"):
             raise ValueError(f"{name}: topics.{key} must be a non-empty relative name, got {topic!r}")
-    frames = _section(raw, "frames", {"odom", "base"}, name)
-    sync = _section(raw, "sync", {"stereo_queue_size", "stereo_slop_s", "work_queue_size"}, name)
+    frames = _section(raw, "frames", {"odom", "base", "camera_optical"}, name)
+    if publish_processed_image and not frames["camera_optical"]:
+        raise ValueError(f"{name}: publishing the processed image needs frames.camera_optical")
+    sync = _section(raw, "sync", {"stereo_queue_size", "stereo_slop_s", "front_queue_size", "work_queue_size"}, name)
     imu = _section(raw, "imu", {"buffer_capacity", "wait_timeout_s", "clock_silence_s"}, name)
     errors = _section(raw, "errors", {"max_consecutive_bad_inputs"}, name)
     output = _section(raw, "output", {"fd_twist_variance"}, name)
@@ -98,10 +113,13 @@ def parse_profile(raw: Mapping[str, Any], name: str) -> MacvioProfile:
         rect_mode=rect_mode,
         macslam_config=macslam_config,
         image_transport=_choice(raw["image_transport"], ImageTransport, "image_transport"),
-        topics=ProfileTopics(**{k: str(v) for k, v in topics.items()}),
-        frames=ProfileFrames(odom=str(frames["odom"]), base=str(frames["base"])),
+        topics=ProfileTopics(**{k: None if v is None else str(v) for k, v in topics.items()}),
+        frames=ProfileFrames(odom=str(frames["odom"]), base=str(frames["base"]),
+                             camera_optical=str(frames["camera_optical"]) if frames["camera_optical"] else None),
+        publish_processed_image=publish_processed_image,
         stereo_queue_size=_positive(sync["stereo_queue_size"], int, "sync.stereo_queue_size"),
         stereo_slop_s=_positive(sync["stereo_slop_s"], float, "sync.stereo_slop_s"),
+        front_queue_size=_positive(sync["front_queue_size"], int, "sync.front_queue_size"),
         work_queue_size=_positive(sync["work_queue_size"], int, "sync.work_queue_size"),
         imu_buffer_capacity=_positive(imu["buffer_capacity"], int, "imu.buffer_capacity"),
         imu_wait_timeout_s=_non_negative(imu["wait_timeout_s"], "imu.wait_timeout_s"),

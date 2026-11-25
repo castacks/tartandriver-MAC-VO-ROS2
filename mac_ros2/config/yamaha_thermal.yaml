@@ -4,6 +4,7 @@ modality: thermal
 rect_mode: stereo_rect
 macslam_config: Config/Experiment/MACVIO/Offroad/VIO_MACI2_FR_Yamaha_Thermal.yaml
 image_transport: raw
+publish_processed_image: true
 
 topics:
   image_left: thermal_left/image
@@ -11,14 +12,19 @@ topics:
   imu: novatel/imu/data
   odometry: macvio/odometry_raw
   status: macvio/status
+  map_points: macvio/map_points
+  processed_image: thermal_left/image_processed
+  processed_camera_info: thermal_left/camera_info
 
 frames:
   odom: macvio_odom
   base: vehicle
+  camera_optical: thermal_left/optical_frame
 
 sync:
   stereo_queue_size: 5
   stereo_slop_s: 0.02
+  front_queue_size: 2
   work_queue_size: 2
 
 imu:

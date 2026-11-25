@@ -131,7 +131,7 @@ def test_node_frames_equal_offline_frames(name):
         right = to_ros(cv2.imread(str(right_path), cv2.IMREAD_UNCHANGED))
         window = buffer.build_window(t_prev, t_cur)
         assert window is not None
-        online = builder.build(k, t_cur, left, right, window)
+        online = builder.attach_imu(k, builder.preprocess(t_cur, left, right), window)
         reference = offline[k]
         t_prev = t_cur
 

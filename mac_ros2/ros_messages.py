@@ -11,11 +11,11 @@ from builtin_interfaces.msg import Time
 from diagnostic_msgs.msg import DiagnosticStatus, KeyValue
 from geometry_msgs.msg import TransformStamped
 from nav_msgs.msg import Odometry
-from sensor_msgs.msg import CompressedImage, Image, Imu
+from sensor_msgs.msg import CameraInfo, CompressedImage, Image, Imu, PointField, PointCloud2
 from std_msgs.msg import String
 
 from .image_decode import decode_compressed, decode_image
-from .odometry_state import OdometryState
+from .odometry_state import MAP_POINT_FIELDS, MapPoints, OdometryState
 
 
 def stamp_to_ns(stamp: Time) -> int:
@@ -80,6 +80,62 @@ def transform_message(odometry: Odometry, child_frame_id: str) -> TransformStamp
     transform.transform.translation.z = position.z
     transform.transform.rotation = odometry.pose.pose.orientation
     return transform
+
+
+def static_rotation_message(parent: str, child: str, rotation_xyzw: np.ndarray) -> TransformStamped:
+    """A pure-rotation parent <- child transform, stamped at time zero as static TFs are."""
+    transform = TransformStamped()
+    transform.header.frame_id = parent
+    transform.child_frame_id = child
+    q = transform.transform.rotation
+    q.x, q.y, q.z, q.w = (float(v) for v in rotation_xyzw)
+    return transform
+
+
+def point_cloud_message(points: MapPoints, frame_id: str) -> PointCloud2:
+    """Map points -> PointCloud2 with one FLOAT32 field per `MAP_POINT_FIELDS` column."""
+    data = np.ascontiguousarray(points.values, dtype="<f4")
+    assert data.ndim == 2 and data.shape[1] == len(MAP_POINT_FIELDS), f"map points are {data.shape}"
+    message = PointCloud2(
+        height=1,
+        width=data.shape[0],
+        fields=[PointField(name=name, offset=4 * i, datatype=PointField.FLOAT32, count=1)
+                for i, name in enumerate(MAP_POINT_FIELDS)],
+        is_bigendian=False,
+        point_step=data.itemsize * data.shape[1],
+        row_step=data.nbytes,
+        data=data.tobytes(),
+        is_dense=True,
+    )
+    message.header.stamp = ns_to_stamp(points.stamp_ns)
+    message.header.frame_id = frame_id
+    return message
+
+
+def mono8_message(stamp_ns: int, frame_id: str, image: np.ndarray) -> Image:
+    assert image.dtype == np.uint8 and image.ndim == 2, f"mono8 needs an HxW uint8 image, got {image.dtype} {image.shape}"
+    message = Image(height=image.shape[0], width=image.shape[1], encoding="mono8", is_bigendian=0,
+                    step=image.shape[1], data=np.ascontiguousarray(image).tobytes())
+    message.header.stamp = ns_to_stamp(stamp_ns)
+    message.header.frame_id = frame_id
+    return message
+
+
+def camera_info_message(stamp_ns: int, frame_id: str, width: int, height: int, K: np.ndarray) -> CameraInfo:
+    """Pinhole camera_info of a rectified, undistorted image."""
+    K = np.asarray(K, dtype=np.float64).reshape(3, 3)
+    message = CameraInfo(
+        width=width,
+        height=height,
+        distortion_model="plumb_bob",
+        d=[0.0] * 5,
+        k=[float(v) for v in K.reshape(9)],
+        r=[float(v) for v in np.eye(3).reshape(9)],
+        p=[float(v) for v in np.hstack([K, np.zeros((3, 1))]).reshape(12)],
+    )
+    message.header.stamp = ns_to_stamp(stamp_ns)
+    message.header.frame_id = frame_id
+    return message
 
 
 def status_message(status: Mapping[str, Any]) -> String:

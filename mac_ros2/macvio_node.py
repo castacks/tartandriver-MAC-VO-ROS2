@@ -1,26 +1,32 @@
-"""ROS 2 shell around `MacvioRunner`: stereo + IMU in, raw odometry and status out."""
+"""ROS 2 shell around `MacvioRunner`: stereo + IMU in; raw odometry, map points, processed image and status out."""
 
 from __future__ import annotations
 
 from typing import Any
 
+import numpy as np
 import rclpy
 from message_filters import ApproximateTimeSynchronizer, Subscriber
 from nav_msgs.msg import Odometry
 from rclpy.node import Node
 from rclpy.qos import qos_profile_sensor_data
-from sensor_msgs.msg import CompressedImage, Image, Imu
+from sensor_msgs.msg import CameraInfo, CompressedImage, Image, Imu, PointCloud2
 from std_msgs.msg import String
+from tf2_ros import StaticTransformBroadcaster
 
 from .macvio_profile import load_profile
 from .macvio_runner import MacvioRunner
-from .odometry_state import OdometryState
+from .odometry_state import MapPoints, OdometryState
 from .ros_messages import (
+    camera_info_message,
     compressed_array,
     image_array,
     imu_sample,
+    mono8_message,
     odometry_message,
+    point_cloud_message,
     stamp_to_ns,
+    static_rotation_message,
     status_message,
 )
 
@@ -35,13 +41,28 @@ class MacvioNode(Node):
 
         self.odometry_pub = self.create_publisher(Odometry, topics.odometry, 10)
         self.status_pub = self.create_publisher(String, topics.status, 10)
+        self.map_points_pub = self.create_publisher(PointCloud2, topics.map_points, 10)
+        self.image_pub = self.camera_info_pub = None
+        if self.profile.publish_processed_image:
+            self.image_pub = self.create_publisher(Image, topics.processed_image, 10)
+            self.camera_info_pub = self.create_publisher(CameraInfo, topics.processed_camera_info, 10)
         self.runner = MacvioRunner(
             self.profile,
             now_ns=self._now_ns,
             on_odometry=self._publish_odometry,
             on_status=self._publish_status,
+            on_map_points=self._publish_map_points,
+            on_processed_image=self._publish_processed_image,
             log=self.get_logger().warning,
         )
+        self.rect_frame: str | None = None
+        self.static_tf_broadcaster: StaticTransformBroadcaster | None = None
+        if self.runner.rect_rotation is not None:
+            self.rect_frame = f"{frames.camera_optical}_rect"
+            self.static_tf_broadcaster = StaticTransformBroadcaster(self)
+            self.static_tf_broadcaster.sendTransform(
+                static_rotation_message(frames.camera_optical, self.rect_frame, self.runner.rect_rotation)
+            )
 
         compressed = self.profile.image_transport == "compressed"
         image_type = CompressedImage if compressed else Image
@@ -58,9 +79,12 @@ class MacvioNode(Node):
         self.stereo_sync.registerCallback(self._on_stereo)
         self.create_timer(1.0 / STATUS_RATE_HZ, self._tick)
         self.runner.start()
+        outputs = f"{topics.odometry} ({frames.odom} -> {frames.base}), {topics.map_points}"
+        if self.rect_frame is not None:
+            outputs += f", {topics.processed_image} ({self.rect_frame})"
         self.get_logger().info(
             f"MACVIO profile {self.profile.name}: {topics.image_left} + {topics.image_right} + {topics.imu} "
-            f"-> {topics.odometry} ({frames.odom} -> {frames.base}); estimator {self.profile.macslam_config}"
+            f"-> {outputs}; estimator {self.profile.macslam_config}"
         )
 
     def _now_ns(self) -> int:
@@ -85,6 +109,15 @@ class MacvioNode(Node):
 
     def _publish_odometry(self, odometry: OdometryState) -> None:
         self.odometry_pub.publish(odometry_message(odometry, self.profile.frames.odom, self.profile.frames.base))
+
+    def _publish_map_points(self, points: MapPoints) -> None:
+        self.map_points_pub.publish(point_cloud_message(points, self.profile.frames.base))
+
+    def _publish_processed_image(self, stamp_ns: int, image: np.ndarray, K: np.ndarray) -> None:
+        assert self.image_pub is not None and self.camera_info_pub is not None and self.rect_frame is not None
+        height, width = image.shape
+        self.image_pub.publish(mono8_message(stamp_ns, self.rect_frame, image))
+        self.camera_info_pub.publish(camera_info_message(stamp_ns, self.rect_frame, width, height, K))
 
     def destroy_node(self) -> None:
         self.runner.shutdown()
