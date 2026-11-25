@@ -27,7 +27,7 @@ class LocalizationAdapter(Node):
         if self.pose_source not in ("super_odometry", "macvio"):
             raise ValueError(f"pose_source must be 'super_odometry' or 'macvio', got {self.pose_source!r}")
         reference_topic = str(self.declare_parameter("reference_topic", "/localization/super_odometry").value)
-        macvio_topic = str(self.declare_parameter("macvio_topic", "macvio/odometry").value)
+        macvio_topic = str(self.declare_parameter("macvio_topic", "macvio/odometry_raw").value)
         macvio_status_topic = str(self.declare_parameter("macvio_status_topic", "macvio/status").value)
         output_topic = str(self.declare_parameter("output_topic", "/superodometry/integrated_to_init").value)
         self.world_frame = str(self.declare_parameter("world_frame", "sensor_init").value)

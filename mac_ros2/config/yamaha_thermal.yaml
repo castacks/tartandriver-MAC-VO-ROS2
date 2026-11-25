@@ -9,14 +9,12 @@ topics:
   image_left: thermal_left/image
   image_right: thermal_right/image
   imu: novatel/imu/data
-  odometry: macvio/odometry
+  odometry: macvio/odometry_raw
   status: macvio/status
 
 frames:
   odom: macvio_odom
   base: vehicle
-  # Distinct from base so the adapter stays the only TF parent of base
-  tf_base: macvio_vehicle
 
 sync:
   stereo_queue_size: 5

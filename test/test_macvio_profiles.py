@@ -32,7 +32,6 @@ def test_profile_loads_its_experiment_and_preprocess_chain(name):
     rig = get_rig(profile.platform, profile.modality, profile.rect_mode)
     experiment = load_experiment(profile)
     assert hasattr(experiment.Preprocess, rig.preprocess_key)
-    assert profile.frames.tf_base and profile.frames.tf_base != profile.frames.base
 
 
 def test_profile_by_path_equals_profile_by_name():
@@ -58,7 +57,7 @@ def test_topics_are_relative_and_match_the_bags():
     assert topics["stallion_rgb"].image_right == "multisense_front/right/image_rect/compressed"
     assert {t.imu for t in topics.values()} == {"novatel/imu/data", "microstrain/nav/filtered_imu/data"}
     for t in topics.values():
-        assert t.odometry == "macvio/odometry" and t.status == "macvio/status"
+        assert t.odometry == "macvio/odometry_raw" and t.status == "macvio/status"
 
 
 def test_stallion_imu_buffer_covers_its_500hz_imu():
@@ -85,6 +84,7 @@ def test_thermal_rect_mode():
     (lambda r: r["imu"].update(wait_timeout_s=-1), "non-negative"),
     (lambda r: r["sync"].pop("stereo_slop_s"), "missing"),
     (lambda r: r.update(Camera={"fx": 1.0}), "unknown"),
+    (lambda r: r["frames"].update(tf_base="macvio_vehicle"), "unknown"),
 ])
 def test_invalid_profiles_are_rejected(edit, match):
     raw = raw_profile("yamaha_thermal")

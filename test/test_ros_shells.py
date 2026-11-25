@@ -130,6 +130,7 @@ def adapter(request) -> Any:
 @pytest.mark.parametrize("adapter", ["macvio"], indirect=True)
 def test_adapter_gates_aligns_and_publishes(adapter):
     node, sent = adapter
+    assert "/macvio/odometry_raw" in {s.topic_name for s in node.subscriptions}
     now = node.get_clock().now().nanoseconds
     reference = odometry_message(make_odometry(now, x=10.0), "sensor_init", "vehicle")
     node._on_reference(reference)
@@ -169,7 +170,7 @@ def launch_module() -> Any:
     return module
 
 
-DEFAULTS = {"platform": "yamaha", "modality": "thermal", "config_file": "", "pose_source": "super_odometry",
+DEFAULTS = {"platform": "yamaha", "modality": "thermal", "config_file": "", "pose_source": "macvio",
             "use_sim_time": "false", "reference_topic": "", "output_topic": "", "world_frame": "", "base_frame": ""}
 
 
@@ -180,6 +181,12 @@ def launch_actions(**arguments: str) -> list[Any]:
     context.launch_configurations.update({**DEFAULTS, **arguments})
     (group,) = module._launch_nodes(context)
     return [a for a in group.get_sub_entities() if isinstance(a, (PushRosNamespace, NodeAction))]
+
+
+def test_launch_defaults_to_macvio():
+    description = launch_module().generate_launch_description()
+    defaults = {a.name: a.default_value for a in description.entities if hasattr(a, "default_value")}
+    assert defaults["pose_source"][0].text == "macvio"
 
 
 def test_launch_yamaha_keeps_the_deploy_arguments():
@@ -195,6 +202,8 @@ def test_launch_yamaha_keeps_the_deploy_arguments():
 
 
 def test_launch_stallion_pushes_its_namespace_and_maps_config_file():
+    namespace, _, adapter = launch_module().resolve({**DEFAULTS, "platform": "stallion"})
+    assert namespace == "crl_rzr" and adapter["output_topic"] == "macvio/odometry"
     arguments = {**DEFAULTS, "platform": "stallion", "config_file": "/tmp/custom.yaml", "output_topic": "odom_out",
                  "use_sim_time": "true"}
     namespace, macvio, adapter = launch_module().resolve(arguments)
@@ -242,10 +251,9 @@ def macvio_node(monkeypatch) -> Any:
     module = importlib.import_module("mac_ros2.macvio_node")
     rclpy.init(args=["--ros-args", "-p", "profile:=stallion_thermal"])
     node = module.MacvioNode()
-    sent: dict[str, list[Any]] = {"odometry": [], "status": [], "tf": []}
+    sent: dict[str, list[Any]] = {"odometry": [], "status": []}
     node.odometry_pub.publish = sent["odometry"].append
     node.status_pub.publish = sent["status"].append
-    node.tf_broadcaster.sendTransform = sent["tf"].append
     yield node, sent
     node.destroy_node()
     rclpy.shutdown()
@@ -279,4 +287,6 @@ def test_macvio_node_shell_wiring(macvio_node):
     assert parse_status(sent["status"][-1])["state"] == "TRACKING"
     odometry = sent["odometry"][-1]
     assert (odometry.header.frame_id, odometry.child_frame_id) == ("crl_rzr/macvio_odom", "crl_rzr/base_link")
-    assert sent["tf"][-1].child_frame_id == "crl_rzr/macvio_base_link"
+    assert not hasattr(node, "tf_broadcaster")
+    published = {name for name, _ in node.get_publisher_names_and_types_by_node("macvio_node", "/")}
+    assert "/macvio/odometry_raw" in published and "/tf" not in published

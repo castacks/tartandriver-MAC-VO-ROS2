@@ -1,4 +1,4 @@
-"""ROS 2 shell around `MacvioRunner`: stereo + IMU in, odometry, TF and status out."""
+"""ROS 2 shell around `MacvioRunner`: stereo + IMU in, raw odometry and status out."""
 
 from __future__ import annotations
 
@@ -11,7 +11,6 @@ from rclpy.node import Node
 from rclpy.qos import qos_profile_sensor_data
 from sensor_msgs.msg import CompressedImage, Image, Imu
 from std_msgs.msg import String
-from tf2_ros import TransformBroadcaster
 
 from .macvio_profile import load_profile
 from .macvio_runner import MacvioRunner
@@ -23,7 +22,6 @@ from .ros_messages import (
     odometry_message,
     stamp_to_ns,
     status_message,
-    transform_message,
 )
 
 STATUS_RATE_HZ = 10.0
@@ -37,7 +35,6 @@ class MacvioNode(Node):
 
         self.odometry_pub = self.create_publisher(Odometry, topics.odometry, 10)
         self.status_pub = self.create_publisher(String, topics.status, 10)
-        self.tf_broadcaster = TransformBroadcaster(self) if frames.tf_base else None
         self.runner = MacvioRunner(
             self.profile,
             now_ns=self._now_ns,
@@ -87,10 +84,7 @@ class MacvioNode(Node):
         self.status_pub.publish(status_message(status))
 
     def _publish_odometry(self, odometry: OdometryState) -> None:
-        message = odometry_message(odometry, self.profile.frames.odom, self.profile.frames.base)
-        self.odometry_pub.publish(message)
-        if self.tf_broadcaster is not None:
-            self.tf_broadcaster.sendTransform(transform_message(message, self.profile.frames.tf_base))
+        self.odometry_pub.publish(odometry_message(odometry, self.profile.frames.odom, self.profile.frames.base))
 
     def destroy_node(self) -> None:
         self.runner.shutdown()

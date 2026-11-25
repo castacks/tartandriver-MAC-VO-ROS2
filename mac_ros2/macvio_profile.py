@@ -33,7 +33,6 @@ class ProfileTopics:
 class ProfileFrames:
     odom: str
     base: str
-    tf_base: str  # TF child of `odom`; empty disables the node's TF
 
 
 @dataclass(frozen=True, kw_only=True)
@@ -86,7 +85,7 @@ def parse_profile(raw: Mapping[str, Any], name: str) -> MacvioProfile:
     for key, topic in topics.items():
         if not isinstance(topic, str) or not topic or topic.startswith("/"):
             raise ValueError(f"{name}: topics.{key} must be a non-empty relative name, got {topic!r}")
-    frames = _section(raw, "frames", {"odom", "base", "tf_base"}, name)
+    frames = _section(raw, "frames", {"odom", "base"}, name)
     sync = _section(raw, "sync", {"stereo_queue_size", "stereo_slop_s", "work_queue_size"}, name)
     imu = _section(raw, "imu", {"buffer_capacity", "wait_timeout_s", "clock_silence_s"}, name)
     errors = _section(raw, "errors", {"max_consecutive_bad_inputs"}, name)
@@ -100,7 +99,7 @@ def parse_profile(raw: Mapping[str, Any], name: str) -> MacvioProfile:
         macslam_config=macslam_config,
         image_transport=_choice(raw["image_transport"], ImageTransport, "image_transport"),
         topics=ProfileTopics(**{k: str(v) for k, v in topics.items()}),
-        frames=ProfileFrames(**{k: str(v or "") for k, v in frames.items()}),
+        frames=ProfileFrames(odom=str(frames["odom"]), base=str(frames["base"])),
         stereo_queue_size=_positive(sync["stereo_queue_size"], int, "sync.stereo_queue_size"),
         stereo_slop_s=_positive(sync["stereo_slop_s"], float, "sync.stereo_slop_s"),
         work_queue_size=_positive(sync["work_queue_size"], int, "sync.work_queue_size"),

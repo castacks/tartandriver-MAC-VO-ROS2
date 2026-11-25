@@ -17,7 +17,7 @@ PLATFORMS = {
     "stallion": {
         "namespace": "crl_rzr",
         "reference_topic": "liopard/fused/odometry",
-        "output_topic": "localization/odometry",
+        "output_topic": "macvio/odometry",
         "world_frame": "crl_rzr/odom",
         "base_frame": "crl_rzr/base_link",
     },
@@ -60,7 +60,7 @@ def generate_launch_description() -> LaunchDescription:
             DeclareLaunchArgument("platform", default_value="yamaha", choices=list(PLATFORMS)),
             DeclareLaunchArgument("modality", default_value="thermal", choices=["thermal", "rgb"]),
             DeclareLaunchArgument("config_file", default_value="", description="Profile yaml overriding platform/modality"),
-            DeclareLaunchArgument("pose_source", default_value="super_odometry", choices=["super_odometry", "macvio"]),
+            DeclareLaunchArgument("pose_source", default_value="macvio", choices=["super_odometry", "macvio"]),
             DeclareLaunchArgument("use_sim_time", default_value="false"),
             *(
                 DeclareLaunchArgument(name, default_value="", description="Adapter override; empty uses the platform default")

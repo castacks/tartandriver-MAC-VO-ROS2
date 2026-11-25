@@ -10,14 +10,12 @@ topics:
   image_left: multisense_thermal_front/left/image_mono/compressed
   image_right: multisense_thermal_front/right/image_mono/compressed
   imu: microstrain/nav/filtered_imu/data
-  odometry: macvio/odometry
+  odometry: macvio/odometry_raw
   status: macvio/status
 
 frames:
   odom: crl_rzr/macvio_odom
   base: crl_rzr/base_link
-  # Distinct from base so the adapter stays the only TF parent of base
-  tf_base: crl_rzr/macvio_base_link
 
 sync:
   stereo_queue_size: 5
