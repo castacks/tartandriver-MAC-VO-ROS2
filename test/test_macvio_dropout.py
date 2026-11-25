@@ -208,7 +208,12 @@ def run(imu_gap: tuple[int, int] | None = None, camera_gap: tuple[int, int] | No
         trace.events.append((frame_ns, machine.on_pair(frame_ns, now)))
         imu = buffer.build_window(t_prev, frame_ns)
         assert imu is not None
-        system.run(make_frame(processed, frame_ns, imu))
+        try:
+            system.run(make_frame(processed, frame_ns, imu))
+        except RuntimeError as error:
+            trace.events.append((frame_ns, machine.fail(f"{type(error).__name__}: {error}", now)))
+            publish_status(now)
+            break
         t_prev, processed = frame_ns, processed + 1
 
         result = frame_result(system)
@@ -263,7 +268,7 @@ def test_camera_dropout_holds_until_first_optimized_frame():
     after_init = [state for _, state in trace.events[initialized_at:]]
 
     assert collapse(after_init) == [
-        VioState.TRACKING, VioState.CAMERA_DROPOUT, VioState.SEGMENT_PENDING, VioState.TRACKING
+        VioState.TRACKING, VioState.CAMERA_DROPOUT, VioState.AWAITING_OPTIMIZED, VioState.TRACKING
     ]
     last_pair = CAMERA_GAP[0] - CAMERA_DT_NS
     detected = next(t for t, s in trace.events if s is VioState.CAMERA_DROPOUT)
@@ -283,3 +288,12 @@ def test_long_camera_gap_recovers():
     trace, status, system = run(camera_gap=(START_NS + 3_000 * MS, START_NS + 4_500 * MS))
     assert status["last_error"] == "" and not system.lost_track
     assert trace.frame_states[-1] is VioState.TRACKING
+
+
+def test_camera_gap_beyond_dead_after_latches_error():
+    gap = (START_NS + 2_000 * MS, START_NS + 4_500 * MS)
+    trace, status, _ = run(camera_gap=gap)
+
+    assert trace.events[-1][1] is VioState.ERROR and status["state"] == "ERROR" and status["hold"]
+    assert status["last_error"].startswith("RuntimeError: camera gap of 2.60 s exceeds camera_dead_after_s (2.0 s)")
+    assert [o.stamp_ns for o in trace.passed if o.stamp_ns >= gap[0]] == []

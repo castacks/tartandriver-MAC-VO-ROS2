@@ -99,7 +99,7 @@ def frame_result(system: MACVIO) -> FrameResult:
     """Estimator state after the frame it just ran."""
     body = system.Map.body
     status = system.vio_status
-    segment_pending, n_segments, last_frame_gap_s = _camera_gap_fields(status)
+    n_tracking_restarts, last_frame_gap_s = _camera_gap_fields(status)
     return FrameResult(
         stamp_ns=int(body.data["time_ns"][-1].item()),
         initialized=system.imu_initcond is not None,
@@ -110,19 +110,13 @@ def frame_result(system: MACVIO) -> FrameResult:
         last_gap_s=status.last_gap_s,
         n_chain_breaks=status.n_chain_breaks,
         n_dropped_samples=status.n_dropped_samples,
-        segment_pending=segment_pending,
-        n_segments=n_segments,
+        n_tracking_restarts=n_tracking_restarts,
         last_frame_gap_s=last_frame_gap_s,
     )
 
 
-def _camera_gap_fields(status: VIOStatus) -> tuple[bool, int, float]:
-    """Camera-gap fields of newer mac_slam; absent ones read as False/0."""
-    return (
-        bool(getattr(status, "segment_pending", False)),
-        int(getattr(status, "n_segments", 0)),
-        float(getattr(status, "last_frame_gap_s", 0.0)),
-    )
+def _camera_gap_fields(status: VIOStatus) -> tuple[int, float]:
+    return status.n_tracking_restarts, status.last_frame_gap_s
 
 
 def _finite_difference_twist(map: StereoVisualInertialMap) -> tuple[torch.Tensor, torch.Tensor]:

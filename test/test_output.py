@@ -2,8 +2,6 @@
 
 from __future__ import annotations
 
-from types import SimpleNamespace
-
 import numpy as np
 import pypose as pp
 import pytest
@@ -13,8 +11,10 @@ from mac_ros2.odometry_state import MAP_POINT_FIELDS
 from mac_ros2.output import _camera_gap_fields, map_points_from_map, odometry_from_map, processed_image, rect_rotation
 from Src.DataLoader.Dataset.OffroadRig import get_rig
 from Src.DataLoader.Dataset.OffroadRig import R_OPTICAL_NED
+from Src.Module.IMU.IMUChain import VIOStatus
 from Src.Module.Map import IMUNode, PointNode, StereoNode
 from Src.Scripts.AutoTest.imu_dropout_fixtures import new_map, push_body
+from Src.Utility.Enum import IMUWindowStatus, VIOMode
 
 NAN3 = (float("nan"),) * 3
 YAMAHA_T_BODY_BASE = pp.SE3(torch.tensor([0.508, 0.05, 0.152, 0.0, 0.0, 0.0, 1.0], dtype=torch.float64))
@@ -123,10 +123,12 @@ def test_non_finite_pose_raises(field):
         odometry_from_map(m, YAMAHA_T_BODY_BASE, fd_twist_variance=1.0)
 
 
-def test_camera_gap_fields_default_when_missing():
-    assert _camera_gap_fields(SimpleNamespace()) == (False, 0, 0.0)
-    status = SimpleNamespace(segment_pending=True, n_segments=2, last_frame_gap_s=1.5)
-    assert _camera_gap_fields(status) == (True, 2, 1.5)
+def test_camera_gap_fields():
+    status = VIOStatus(
+        mode=VIOMode.VIO, frames_in_mode=3, last_gap_s=0.0, imu_age_s=0.0, window_status=IMUWindowStatus.Healthy,
+        n_chain_breaks=0, n_dropped_samples=0, n_tracking_restarts=2, last_frame_gap_s=1.5,
+    )
+    assert _camera_gap_fields(status) == (2, 1.5)
 
 
 def push_stereo_points(m, t_ns: int, T_BS: pp.LieTensor, positions, covariances, colors) -> None:

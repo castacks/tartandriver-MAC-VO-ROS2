@@ -24,7 +24,7 @@ def frame(stamp_ns: int = T0, **overrides) -> FrameResult:
     fields = dict(
         stamp_ns=stamp_ns, initialized=True, optimized=True, lost_track=False, vio_mode="VIO",
         frames_in_mode=1, last_gap_s=0.0, n_chain_breaks=0, n_dropped_samples=0,
-        segment_pending=False, n_segments=0, last_frame_gap_s=0.1,
+        n_tracking_restarts=0, last_frame_gap_s=0.1,
     )
     fields.update(overrides)
     return FrameResult(**fields)
@@ -52,7 +52,7 @@ HOLD_TABLE = {
     VioState.ERROR: True,
     VioState.INITIALIZING: True,
     VioState.CAMERA_DROPOUT: True,
-    VioState.SEGMENT_PENDING: True,
+    VioState.AWAITING_OPTIMIZED: True,
     VioState.LOST_TRACK: True,
     VioState.IMU_DEAD: True,
     VioState.DEGRADED: False,
@@ -72,12 +72,10 @@ PRECEDENCE_ROWS = [
      VioState.ERROR),
     ("initializing", lambda: machine(frame(initialized=False, vio_mode="PRE_INIT", lost_track=True), dropout=True),
      VioState.INITIALIZING),
-    ("camera_dropout", lambda: machine(frame(segment_pending=True, lost_track=True, vio_mode="IMU_DEAD"),
-                                       dropout=True), VioState.CAMERA_DROPOUT),
+    ("camera_dropout", lambda: machine(frame(lost_track=True, vio_mode="IMU_DEAD"), dropout=True),
+     VioState.CAMERA_DROPOUT),
     ("awaiting_optimized", lambda: machine(frame(lost_track=True, vio_mode="IMU_DEAD"), awaiting=True),
-     VioState.SEGMENT_PENDING),
-    ("core_segment_pending", lambda: machine(frame(segment_pending=True, lost_track=True, vio_mode="IMU_DEAD")),
-     VioState.SEGMENT_PENDING),
+     VioState.AWAITING_OPTIMIZED),
     ("lost_track", lambda: machine(frame(lost_track=True, vio_mode="IMU_DEAD")), VioState.LOST_TRACK),
     ("imu_dead", lambda: machine(frame(vio_mode="IMU_DEAD")), VioState.IMU_DEAD),
     ("vo_fallback", lambda: machine(frame(vio_mode="VO_FALLBACK")), VioState.DEGRADED),
@@ -132,18 +130,18 @@ def test_live_dropout_on_sensor_clock():
 def test_dropout_clears_on_first_optimized_frame_after_the_gap():
     m = machine(frame())
     m.on_imu(T0 + 800 * MS, T0 + 800 * MS)
-    assert m.on_pair(T0 + 850 * MS, T0 + 850 * MS) is VioState.SEGMENT_PENDING
+    assert m.on_pair(T0 + 850 * MS, T0 + 850 * MS) is VioState.AWAITING_OPTIMIZED
     # A backlog frame from before the gap does not release the hold
-    assert m.on_frame(frame(T0 + 100 * MS), T0 + 860 * MS) is VioState.SEGMENT_PENDING
+    assert m.on_frame(frame(T0 + 100 * MS), T0 + 860 * MS) is VioState.AWAITING_OPTIMIZED
     assert m.on_frame(frame(T0 + 850 * MS, optimized=False, lost_track=True), T0 + 900 * MS) \
-        is VioState.SEGMENT_PENDING
-    assert m.on_pair(T0 + 950 * MS, T0 + 950 * MS) is VioState.SEGMENT_PENDING
+        is VioState.AWAITING_OPTIMIZED
+    assert m.on_pair(T0 + 950 * MS, T0 + 950 * MS) is VioState.AWAITING_OPTIMIZED
     assert m.on_frame(frame(T0 + 950 * MS), T0 + 960 * MS) is VioState.TRACKING
 
 
 def test_retroactive_dropout_when_a_pair_arrives_after_a_long_gap():
     m = machine(frame())
-    assert m.on_pair(T0 + 500 * MS, T0 + 1 * MS) is VioState.SEGMENT_PENDING
+    assert m.on_pair(T0 + 500 * MS, T0 + 1 * MS) is VioState.AWAITING_OPTIMIZED
     status = m.status(T0 + 1 * MS)
     assert not status["camera_dropout"] and status["awaiting_optimized"] and status["n_camera_dropouts"] == 1
     assert m.on_frame(frame(T0 + 500 * MS), T0 + 2 * MS) is VioState.TRACKING
@@ -167,13 +165,13 @@ def test_imu_gap_with_camera_flowing_ages_on_pair_stamps():
 
 
 def test_status_fields():
-    m = machine(frame(n_chain_breaks=2, n_dropped_samples=0, segment_pending=False))
+    m = machine(frame(n_chain_breaks=2, n_dropped_samples=0, n_tracking_restarts=1))
     status = m.status(T0)
     assert status["state"] == "TRACKING" and status["hold"] is False
     assert status["last_frame_stamp_ns"] == T0 and status["initialized"] and not status["lost_track"]
     assert status["vio_status"] == {
         "vio_mode": "VIO", "frames_in_mode": 1, "last_gap_s": 0.0, "n_chain_breaks": 2,
-        "n_dropped_samples": 0, "segment_pending": False, "n_segments": 0, "last_frame_gap_s": 0.1,
+        "n_dropped_samples": 0, "n_tracking_restarts": 1, "last_frame_gap_s": 0.1,
     }
     assert (status["frames_received"], status["frames_processed"], status["frames_dropped"]) == (1, 1, 0)
 

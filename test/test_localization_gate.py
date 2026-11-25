@@ -72,7 +72,7 @@ def test_reference_outside_tolerance_does_not_align():
 def test_no_alignment_while_the_node_holds():
     gate = LocalizationGate()
     gate.on_reference(odom(T0))
-    gate.on_status(status("SEGMENT_PENDING", T0), T0)
+    gate.on_status(status("AWAITING_OPTIMIZED", T0), T0)
     assert gate.on_odometry(odom(T0), T0) is None and not gate.aligned
 
 
@@ -88,7 +88,7 @@ def test_never_realigns_across_holds():
     np.testing.assert_allclose(out.pose[:3], [100.0, 50.0, 0.0], atol=1e-12)
 
 
-@pytest.mark.parametrize("state", ["CAMERA_DROPOUT", "SEGMENT_PENDING", "LOST_TRACK", "IMU_DEAD", "INITIALIZING"])
+@pytest.mark.parametrize("state", ["CAMERA_DROPOUT", "AWAITING_OPTIMIZED", "LOST_TRACK", "IMU_DEAD", "INITIALIZING"])
 def test_hold_states_pause_and_resume(state):
     gate = aligned_gate()
     gate.on_status(status(state, T0 + 100 * MS), T0 + 100 * MS)
@@ -139,7 +139,7 @@ def test_unknown_state_holds():
 
 @pytest.mark.parametrize(
     "state,level",
-    [("TRACKING", DiagLevel.OK), ("DEGRADED", DiagLevel.WARN), ("SEGMENT_PENDING", DiagLevel.ERROR),
+    [("TRACKING", DiagLevel.OK), ("DEGRADED", DiagLevel.WARN), ("AWAITING_OPTIMIZED", DiagLevel.ERROR),
      ("CAMERA_DROPOUT", DiagLevel.ERROR)],
 )
 def test_diagnostic_levels(state, level):

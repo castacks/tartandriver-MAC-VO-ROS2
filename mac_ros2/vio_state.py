@@ -12,7 +12,7 @@ class VioState(str, Enum):
     ERROR = "ERROR"
     INITIALIZING = "INITIALIZING"
     CAMERA_DROPOUT = "CAMERA_DROPOUT"
-    SEGMENT_PENDING = "SEGMENT_PENDING"
+    AWAITING_OPTIMIZED = "AWAITING_OPTIMIZED"
     LOST_TRACK = "LOST_TRACK"
     IMU_DEAD = "IMU_DEAD"
     DEGRADED = "DEGRADED"
@@ -41,8 +41,7 @@ class FrameResult:
     last_gap_s: float
     n_chain_breaks: int
     n_dropped_samples: int
-    segment_pending: bool
-    n_segments: int
+    n_tracking_restarts: int
     last_frame_gap_s: float
 
 
@@ -218,8 +217,8 @@ class VioStateMachine:
             return VioState.INITIALIZING
         if self._camera.dropout:
             return VioState.CAMERA_DROPOUT
-        if self._camera.awaiting_optimized or frame.segment_pending:
-            return VioState.SEGMENT_PENDING
+        if self._camera.awaiting_optimized:
+            return VioState.AWAITING_OPTIMIZED
         if frame.lost_track:
             return VioState.LOST_TRACK
         if frame.vio_mode == "IMU_DEAD":
