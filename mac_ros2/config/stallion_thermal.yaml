@@ -15,13 +15,14 @@ topics:
   status: macvio/status
   map_points: macvio/map_points
   processed_image: multisense_thermal_front/left/image_processed
-  processed_camera_info: multisense_thermal_front/left/camera_info
+  processed_camera_info: multisense_thermal_front/left/camera_info_processed
 
 frames:
   odom: crl_rzr/macvio_odom
   base: crl_rzr/base_link
-  # The driver's left_camera_optical_frame is its rectified frame; this is the raw camera
-  camera_optical: crl_rzr/multisense_thermal_front/left_camera_frame
+  # The driver's optical frame is already the rectified one (R1 from left_camera_frame), so no TF
+  processed_image: crl_rzr/multisense_thermal_front/left_camera_optical_frame
+  rect_tf_parent: null
 
 sync:
   stereo_queue_size: 5

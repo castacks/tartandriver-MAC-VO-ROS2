@@ -150,7 +150,8 @@ class MacvioRunner:
     """Two worker stages: the front stage preprocesses every received pair and reports the processed
     left image; the VIO stage runs MACVIO on the newest preprocessed frames.
 
-    `now_ns` is the ROS clock. Each processed frame emits its status, then its odometry, then its map points.
+    `now_ns` is the ROS clock. Each processed frame emits its status, then, once initialized, its odometry
+    and its map points.
     """
 
     def __init__(
@@ -168,7 +169,7 @@ class MacvioRunner:
         self.profile = profile
         self.rig = get_rig(profile.platform, profile.modality, profile.rect_mode)
         # (x, y, z, w) of the raw <- rectified optical frame, for the processed image's static TF
-        self.rect_rotation = rect_rotation(self.rig) if profile.publish_processed_image else None
+        self.rect_rotation = rect_rotation(self.rig) if profile.frames.rect_tf_parent is not None else None
         experiment = load_experiment(profile)
         self.frames = FrameBuilder(self.rig, getattr(experiment.Preprocess, self.rig.preprocess_key))
         self.imu = IMUBuffer(self.rig.imu, profile.imu_buffer_capacity, profile.imu_wait_timeout_s)
@@ -309,19 +310,19 @@ class MacvioRunner:
             self._t_prev_ns = time_ns
             self.n_frames_run += 1
             result = frame_result(self.system)
-            odometry = None
+            odometry = map_points = None
             if result.initialized:
                 odometry = odometry_from_map(self.system.Map, self.rig.T_body_base, self.profile.fd_twist_variance)
-            map_points = map_points_from_map(self.system.Map, self.rig.T_body_base)
+                map_points = map_points_from_map(self.system.Map, self.rig.T_body_base)
             now = self._now_ns()
             self.state.on_frame(result, now)
         except Exception as error:
             self._fail(f"{type(error).__name__}: {error}")
             return
         self._on_status(self.status(now))
-        if odometry is not None:
+        if odometry is not None and map_points is not None:
             self._on_odometry(odometry)
-        self._on_map_points(map_points)
+            self._on_map_points(map_points)
 
     def _check_pair(self, time_ns: int, left: np.ndarray, right: np.ndarray) -> str | None:
         if self._last_pair_ns is not None and time_ns <= self._last_pair_ns:

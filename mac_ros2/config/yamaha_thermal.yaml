@@ -14,12 +14,13 @@ topics:
   status: macvio/status
   map_points: macvio/map_points
   processed_image: thermal_left/image_processed
-  processed_camera_info: thermal_left/camera_info
+  processed_camera_info: thermal_left/camera_info_processed
 
 frames:
   odom: macvio_odom
   base: vehicle
-  camera_optical: thermal_left/optical_frame
+  processed_image: thermal_left/optical_frame_rect
+  rect_tf_parent: thermal_left/optical_frame
 
 sync:
   stereo_queue_size: 5

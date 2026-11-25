@@ -55,13 +55,12 @@ class MacvioNode(Node):
             on_processed_image=self._publish_processed_image,
             log=self.get_logger().warning,
         )
-        self.rect_frame: str | None = None
         self.static_tf_broadcaster: StaticTransformBroadcaster | None = None
-        if self.runner.rect_rotation is not None:
-            self.rect_frame = f"{frames.camera_optical}_rect"
+        if frames.rect_tf_parent is not None and frames.processed_image is not None:
+            assert self.runner.rect_rotation is not None
             self.static_tf_broadcaster = StaticTransformBroadcaster(self)
             self.static_tf_broadcaster.sendTransform(
-                static_rotation_message(frames.camera_optical, self.rect_frame, self.runner.rect_rotation)
+                static_rotation_message(frames.rect_tf_parent, frames.processed_image, self.runner.rect_rotation)
             )
 
         compressed = self.profile.image_transport == "compressed"
@@ -80,8 +79,8 @@ class MacvioNode(Node):
         self.create_timer(1.0 / STATUS_RATE_HZ, self._tick)
         self.runner.start()
         outputs = f"{topics.odometry} ({frames.odom} -> {frames.base}), {topics.map_points}"
-        if self.rect_frame is not None:
-            outputs += f", {topics.processed_image} ({self.rect_frame})"
+        if self.image_pub is not None:
+            outputs += f", {topics.processed_image} + {topics.processed_camera_info} ({frames.processed_image})"
         self.get_logger().info(
             f"MACVIO profile {self.profile.name}: {topics.image_left} + {topics.image_right} + {topics.imu} "
             f"-> {outputs}; estimator {self.profile.macslam_config}"
@@ -114,10 +113,11 @@ class MacvioNode(Node):
         self.map_points_pub.publish(point_cloud_message(points, self.profile.frames.base))
 
     def _publish_processed_image(self, stamp_ns: int, image: np.ndarray, K: np.ndarray) -> None:
-        assert self.image_pub is not None and self.camera_info_pub is not None and self.rect_frame is not None
+        frame = self.profile.frames.processed_image
+        assert self.image_pub is not None and self.camera_info_pub is not None and frame is not None
         height, width = image.shape
-        self.image_pub.publish(mono8_message(stamp_ns, self.rect_frame, image))
-        self.camera_info_pub.publish(camera_info_message(stamp_ns, self.rect_frame, width, height, K))
+        self.image_pub.publish(mono8_message(stamp_ns, frame, image))
+        self.camera_info_pub.publish(camera_info_message(stamp_ns, frame, width, height, K))
 
     def destroy_node(self) -> None:
         self.runner.shutdown()

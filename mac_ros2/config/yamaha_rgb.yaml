@@ -19,7 +19,8 @@ topics:
 frames:
   odom: macvio_odom
   base: vehicle
-  camera_optical: null
+  processed_image: null
+  rect_tf_parent: null
 
 sync:
   stereo_queue_size: 5

@@ -20,7 +20,8 @@ topics:
 frames:
   odom: crl_rzr/macvio_odom
   base: crl_rzr/base_link
-  camera_optical: null
+  processed_image: null
+  rect_tf_parent: null
 
 sync:
   stereo_queue_size: 5

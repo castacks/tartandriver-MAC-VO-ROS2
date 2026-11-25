@@ -36,7 +36,8 @@ class ProfileTopics:
 class ProfileFrames:
     odom: str
     base: str
-    camera_optical: str | None  # raw left camera optical frame; processed images are in `<camera_optical>_rect`
+    processed_image: str | None  # stamps the processed image and its camera_info
+    rect_tf_parent: str | None  # parent of a static TF to `processed_image` from the rig's R1; None publishes no TF
 
 
 @dataclass(frozen=True, kw_only=True)
@@ -98,9 +99,11 @@ def parse_profile(raw: Mapping[str, Any], name: str) -> MacvioProfile:
             continue
         if not isinstance(topic, str) or not topic or topic.startswith("/"):
             raise ValueError(f"{name}: topics.{key} must be a non-empty relative name, got {topic!r}")
-    frames = _section(raw, "frames", {"odom", "base", "camera_optical"}, name)
-    if publish_processed_image and not frames["camera_optical"]:
-        raise ValueError(f"{name}: publishing the processed image needs frames.camera_optical")
+    frames = _section(raw, "frames", {"odom", "base", "processed_image", "rect_tf_parent"}, name)
+    if publish_processed_image and not frames["processed_image"]:
+        raise ValueError(f"{name}: publishing the processed image needs frames.processed_image")
+    if frames["rect_tf_parent"] and not publish_processed_image:
+        raise ValueError(f"{name}: frames.rect_tf_parent needs publish_processed_image")
     sync = _section(raw, "sync", {"stereo_queue_size", "stereo_slop_s", "front_queue_size", "work_queue_size"}, name)
     imu = _section(raw, "imu", {"buffer_capacity", "wait_timeout_s", "clock_silence_s"}, name)
     errors = _section(raw, "errors", {"max_consecutive_bad_inputs"}, name)
@@ -115,7 +118,8 @@ def parse_profile(raw: Mapping[str, Any], name: str) -> MacvioProfile:
         image_transport=_choice(raw["image_transport"], ImageTransport, "image_transport"),
         topics=ProfileTopics(**{k: None if v is None else str(v) for k, v in topics.items()}),
         frames=ProfileFrames(odom=str(frames["odom"]), base=str(frames["base"]),
-                             camera_optical=str(frames["camera_optical"]) if frames["camera_optical"] else None),
+                             processed_image=_optional_str(frames["processed_image"]),
+                             rect_tf_parent=_optional_str(frames["rect_tf_parent"])),
         publish_processed_image=publish_processed_image,
         stereo_queue_size=_positive(sync["stereo_queue_size"], int, "sync.stereo_queue_size"),
         stereo_slop_s=_positive(sync["stereo_slop_s"], float, "sync.stereo_slop_s"),
@@ -142,6 +146,10 @@ def _section(raw: Mapping[str, Any], key: str, expected: set[str], name: str) ->
     section = raw[key]
     _keys(section, expected, f"{name}.{key}")
     return section
+
+
+def _optional_str(value: Any) -> str | None:
+    return str(value) if value else None
 
 
 def _choice(value: Any, options: Any, field: str) -> Any:

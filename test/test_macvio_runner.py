@@ -156,9 +156,6 @@ def test_frames_flow_to_odometry_with_status_first():
             previous_kind, previous = recorder.events[index - 1]
             assert previous_kind == "status" and previous["last_frame_stamp_ns"] == odometry.stamp_ns
             assert recorder.events[index + 1][0] == "map_points"
-    map_points = recorder.of_kind("map_points")
-    assert [p.stamp_ns for p in map_points] == [START_NS + k * CAMERA_DT_NS for k in range(20)]
-    assert all(p.values.shape == (0, 15) for p in map_points)
     assert recorder.images == []
 
     states = [s["state"] for s in recorder.statuses()]
@@ -278,15 +275,37 @@ def test_split_preprocess_keeps_order_and_rejects_unknown_transforms():
         split_preprocess([*chain, SimpleNamespace(type="ScaleFrame", args={"scale_u": 2, "scale_v": 2, "interp": "nearest"})])
 
 
+def test_map_points_publish_exactly_with_odometry():
+    recorder = Recorder()
+    runner = make_runner(make_mapping_system(), recorder)
+    run_frames(runner, recorder, 20)
+    odometry = recorder.odometry()
+    assert 0 < len(odometry) < runner.n_frames_run
+    kinds = [kind for kind, _ in recorder.events]
+    assert "map_points" not in kinds[:kinds.index("odometry")]
+    assert [kind for kind in kinds if kind != "status"] == ["odometry", "map_points"] * len(odometry)
+    assert [p.stamp_ns for p in recorder.of_kind("map_points")] == [o.stamp_ns for o in odometry]
+
+
+def test_map_points_publish_when_empty():
+    recorder = Recorder()
+    runner = make_runner(make_system(), recorder)
+    run_frames(runner, recorder, 20)
+    map_points = recorder.of_kind("map_points")
+    assert map_points and len(map_points) == len(recorder.odometry())
+    assert all(p.values.shape == (0, 15) for p in map_points)
+
+
 def test_processed_image_and_map_points_share_the_frame_stamp():
     recorder = Recorder()
     runner = publishing(make_runner(make_mapping_system(), recorder))
-    run_frames(runner, recorder, 8)
+    run_frames(runner, recorder, 20)
     image_stamps = [stamp for stamp, _, _ in recorder.images]
+    assert image_stamps == [START_NS + k * CAMERA_DT_NS for k in range(20)]
     map_points = recorder.of_kind("map_points")
-    assert [p.stamp_ns for p in map_points] == image_stamps == [START_NS + k * CAMERA_DT_NS for k in range(8)]
-    assert map_points[0].values.shape == (0, 15)
-    for k, points in enumerate(map_points[1:], start=1):
+    assert map_points
+    for points in map_points:
+        k = image_stamps.index(points.stamp_ns)
         assert points.values.shape == (MAP_POINTS, 15)
         T_base_camera = runner.rig.T_body_base.Inv() @ runner.rig.T_BS
         expected = T_base_camera.Act(torch.tensor([[5.0 + k, 0.0, 0.0]], dtype=torch.float64)).numpy()
@@ -319,7 +338,7 @@ def test_stallion_thermal_processed_image_is_mono8_at_half_scale():
     (stamp, out, K), = recorder.images
     assert out.shape == (512, 640) and out.dtype == np.uint8 and out.max() > 200 and out.min() < 50
     np.testing.assert_allclose(K, runner.rig.K.numpy() * np.array([[0.5], [0.5], [1.0]]), rtol=1e-6)
-    assert runner.rect_rotation is not None
+    assert runner.rect_rotation is None
 
 
 def test_frame_before_imu_is_skipped():

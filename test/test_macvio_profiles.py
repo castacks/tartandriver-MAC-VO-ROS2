@@ -61,18 +61,20 @@ def test_topics_are_relative_and_match_the_bags():
         assert (t.odometry, t.status, t.map_points) == ("macvio/odometry_raw", "macvio/status", "macvio/map_points")
 
 
-@pytest.mark.parametrize("name,image,camera_info,optical", [
-    ("yamaha_thermal", "thermal_left/image_processed", "thermal_left/camera_info", "thermal_left/optical_frame"),
-    ("stallion_thermal", "multisense_thermal_front/left/image_processed", "multisense_thermal_front/left/camera_info",
-     "crl_rzr/multisense_thermal_front/left_camera_frame"),
-    ("yamaha_rgb", None, None, None),
-    ("stallion_rgb", None, None, None),
+@pytest.mark.parametrize("name,image,camera_info,frame,tf_parent", [
+    ("yamaha_thermal", "thermal_left/image_processed", "thermal_left/camera_info_processed",
+     "thermal_left/optical_frame_rect", "thermal_left/optical_frame"),
+    ("stallion_thermal", "multisense_thermal_front/left/image_processed",
+     "multisense_thermal_front/left/camera_info_processed",
+     "crl_rzr/multisense_thermal_front/left_camera_optical_frame", None),
+    ("yamaha_rgb", None, None, None, None),
+    ("stallion_rgb", None, None, None, None),
 ])
-def test_processed_image_outputs(name, image, camera_info, optical):
+def test_processed_image_outputs(name, image, camera_info, frame, tf_parent):
     profile = load_profile(name)
     assert profile.publish_processed_image == (image is not None)
     assert (profile.topics.processed_image, profile.topics.processed_camera_info) == (image, camera_info)
-    assert profile.frames.camera_optical == optical
+    assert (profile.frames.processed_image, profile.frames.rect_tf_parent) == (frame, tf_parent)
 
 
 def test_stallion_imu_buffer_covers_its_500hz_imu():
@@ -102,7 +104,8 @@ def test_thermal_rect_mode():
     (lambda r: r["frames"].update(tf_base="macvio_vehicle"), "unknown"),
     (lambda r: r.update(publish_processed_image="yes"), "bool"),
     (lambda r: r["topics"].update(processed_image=None), "relative"),
-    (lambda r: r["frames"].update(camera_optical=None), "camera_optical"),
+    (lambda r: r["frames"].update(processed_image=None), "frames.processed_image"),
+    (lambda r: r.update(publish_processed_image=False), "rect_tf_parent"),
     (lambda r: r["sync"].update(front_queue_size=0), "positive"),
 ])
 def test_invalid_profiles_are_rejected(edit, match):

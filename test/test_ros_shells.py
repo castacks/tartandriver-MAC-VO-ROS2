@@ -19,7 +19,7 @@ rclpy = pytest.importorskip("rclpy")
 from diagnostic_msgs.msg import DiagnosticStatus  # noqa: E402
 from launch import LaunchContext  # noqa: E402
 from launch_ros.actions import Node as NodeAction, PushRosNamespace  # noqa: E402
-from sensor_msgs.msg import CompressedImage, Image, Imu  # noqa: E402
+from sensor_msgs.msg import CameraInfo, CompressedImage, Image, Imu  # noqa: E402
 from std_msgs.msg import String  # noqa: E402
 
 from mac_ros2.localization_adapter_node import LocalizationAdapter  # noqa: E402
@@ -267,7 +267,7 @@ class FakeRunner:
                  on_processed_image: Any, log: Any) -> None:
         self.profile, self.on_odometry, self.on_status = profile, on_odometry, on_status
         self.on_map_points, self.on_processed_image = on_map_points, on_processed_image
-        self.rect_rotation = RECT_ROTATION if profile.publish_processed_image else None
+        self.rect_rotation = RECT_ROTATION if profile.frames.rect_tf_parent is not None else None
         self.calls: list[tuple[str, Any]] = []
         self.started = self.stopped = False
 
@@ -357,20 +357,44 @@ def test_macvio_node_shell_wiring(macvio_node):
     cloud = sent["map_points"][-1]
     assert cloud.header.frame_id == "crl_rzr/base_link" and cloud.width == 3 and stamp_to_ns(cloud.header.stamp) == 1_000
 
+    published = {name for name, _ in node.get_publisher_names_and_types_by_node("macvio_node", "/")}
+    assert {"/macvio/odometry_raw", "/macvio/status", "/macvio/map_points"} <= published
+
+
+def publish_processed_image(runner: FakeRunner, sent: dict[str, list[Any]]) -> tuple[Image, CameraInfo]:
     K = np.array([[600.0, 0.0, 320.0], [0.0, 600.0, 256.0], [0.0, 0.0, 1.0]])
     runner.on_processed_image(1_000, np.zeros((512, 640), np.uint8), K)
-    rect = "crl_rzr/multisense_thermal_front/left_camera_frame_rect"
     image, info = sent["image"][-1], sent["camera_info"][-1]
-    assert image.header.frame_id == info.header.frame_id == rect and (info.width, info.height) == (640, 512)
+    assert image.header.frame_id == info.header.frame_id and (info.width, info.height) == (640, 512)
     assert stamp_to_ns(image.header.stamp) == stamp_to_ns(info.header.stamp) == 1_000
+    np.testing.assert_allclose(np.reshape(info.p, (3, 4)), np.hstack([K, np.zeros((3, 1))]))
+    return image, info
 
-    (static,) = sent["static_tf"]
-    assert (static.header.frame_id, static.child_frame_id) == ("crl_rzr/multisense_thermal_front/left_camera_frame", rect)
-    assert static.transform.rotation.w == pytest.approx(RECT_ROTATION[3])
 
+@pytest.mark.parametrize("macvio_node", ["stallion_thermal"], indirect=True)
+def test_macvio_node_stallion_stamps_the_driver_optical_frame_without_a_tf(macvio_node):
+    node, sent = macvio_node
+    image, _ = publish_processed_image(node.runner, sent)
+    assert image.header.frame_id == "crl_rzr/multisense_thermal_front/left_camera_optical_frame"
+    assert sent["static_tf"] == [] and node.static_tf_broadcaster is None
     published = {name for name, _ in node.get_publisher_names_and_types_by_node("macvio_node", "/")}
-    assert {"/macvio/odometry_raw", "/macvio/status", "/macvio/map_points",
-            "/multisense_thermal_front/left/image_processed", "/multisense_thermal_front/left/camera_info"} <= published
+    assert {"/multisense_thermal_front/left/image_processed",
+            "/multisense_thermal_front/left/camera_info_processed"} <= published
+    assert not any(name.endswith("/camera_info") for name in published)
+
+
+@pytest.mark.parametrize("macvio_node", ["yamaha_thermal"], indirect=True)
+def test_macvio_node_yamaha_publishes_the_rect_tf(macvio_node):
+    node, sent = macvio_node
+    image, _ = publish_processed_image(node.runner, sent)
+    assert image.header.frame_id == "thermal_left/optical_frame_rect"
+    (static,) = sent["static_tf"]
+    assert (static.header.frame_id, static.child_frame_id) == ("thermal_left/optical_frame",
+                                                               "thermal_left/optical_frame_rect")
+    assert static.transform.rotation.w == pytest.approx(RECT_ROTATION[3])
+    published = {name for name, _ in node.get_publisher_names_and_types_by_node("macvio_node", "/")}
+    assert {"/thermal_left/image_processed", "/thermal_left/camera_info_processed"} <= published
+    assert not any(name.endswith("/camera_info") for name in published)
 
 
 @pytest.mark.parametrize("macvio_node", ["yamaha_rgb"], indirect=True)
