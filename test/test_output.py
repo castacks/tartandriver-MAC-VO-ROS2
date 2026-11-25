@@ -1,4 +1,4 @@
-"""Body (IMU) state in the MACVIO map -> base-frame odometry."""
+"""MACVIO map -> base-frame odometry and map points; processed image and rectification rotation."""
 
 from __future__ import annotations
 
@@ -9,8 +9,11 @@ import pypose as pp
 import pytest
 import torch
 
-from mac_ros2.output import _camera_gap_fields, odometry_from_map
-from Src.Module.Map import IMUNode
+from mac_ros2.odometry_state import MAP_POINT_FIELDS
+from mac_ros2.output import _camera_gap_fields, map_points_from_map, odometry_from_map, processed_image, rect_rotation
+from Src.DataLoader import get_rig
+from Src.DataLoader.Rig import R_OPTICAL_NED
+from Src.Module.Map import IMUNode, PointNode, StereoNode
 from Src.Scripts.AutoTest.imu_dropout_fixtures import new_map, push_body
 
 NAN3 = (float("nan"),) * 3
@@ -124,3 +127,130 @@ def test_camera_gap_fields_default_when_missing():
     assert _camera_gap_fields(SimpleNamespace()) == (False, 0, 0.0)
     status = SimpleNamespace(segment_pending=True, n_segments=2, last_frame_gap_s=1.5)
     assert _camera_gap_fields(status) == (True, 2, 1.5)
+
+
+def push_stereo_points(m, t_ns: int, T_BS: pp.LieTensor, positions, covariances, colors) -> None:
+    """A body + stereo node at `t_ns` whose new map points are given in its camera NED frame."""
+    body = push_body(m, t_ns, T_WB.unsqueeze(0))
+    stereo = m.stereo.push(StereoNode.init({
+        "K": torch.eye(3, dtype=torch.float32).unsqueeze(0),
+        "baseline": torch.tensor([0.3], dtype=torch.float32),
+        "T_BS": T_BS.tensor().view(1, 7),
+        "time_ns": torch.tensor([t_ns], dtype=torch.long),
+    }))
+    m.body2stereo.set(body, stereo)
+    m.stereo2body.set(stereo, body)
+    if len(positions):
+        points = m.map.push(PointNode.init({
+            "pos_Tc": torch.tensor(positions, dtype=torch.float32),
+            "cov_Tc": torch.tensor(covariances, dtype=torch.float64),
+            "color": torch.tensor(colors, dtype=torch.uint8),
+            "age": torch.ones(len(positions), 1, dtype=torch.uint8),
+        }))
+        m.stereo2map.add(stereo, points[:1], points.size(0))
+        m.map2stereo.set(points, stereo)
+
+
+SIGMA_C = [[4.0, 0.3, 0.2], [0.3, 0.5, 0.1], [0.2, 0.1, 0.25]]
+
+
+def test_map_point_fields_match_the_coordinator_feature_keys():
+    assert MAP_POINT_FIELDS == ("x", "y", "z", "r", "g", "b", *(f"cov_{i}" for i in range(1, 10)))
+
+
+def test_map_points_in_base_frame_by_hand():
+    """Camera looking forward from a Stallion-like mount: NED (fwd, right, down) -> base FLU."""
+    m = new_map()
+    T_BS = pp.SE3(torch.tensor([0.0, 0.0, 0.0, 0.0, 0.0, 1.0, 0.0], dtype=torch.float64))  # 180 deg about z
+    push_stereo_points(m, 7_000, T_BS, [[10.0, 1.0, 2.0]], [SIGMA_C], [[10, 20, 30]])
+    points = map_points_from_map(m, ROTATED_T_BODY_BASE)
+
+    assert points.stamp_ns == 7_000 and points.values.dtype == np.float32 and points.values.shape == (1, 15)
+    x, rgb, cov = points.values[0, :3], points.values[0, 3:6], points.values[0, 6:].reshape(3, 3)
+    # 10 m ahead, 1 m right, 2 m below a camera at base (2.5, -0.01, 1.2)
+    np.testing.assert_allclose(x, [12.5, -1.01, -0.8], atol=1e-5)
+    np.testing.assert_array_equal(rgb, [10.0, 20.0, 30.0])
+    flip = np.diag([1.0, -1.0, -1.0])
+    np.testing.assert_allclose(cov, flip @ np.array(SIGMA_C) @ flip, atol=1e-6)
+    assert cov[0, 1] == pytest.approx(-0.3) and cov[1, 2] == pytest.approx(0.1)
+
+
+@pytest.mark.parametrize("platform,modality,rect_mode", [
+    ("yamaha", "thermal", "stereo_rect"), ("stallion", "thermal", "stereo_rect"), ("stallion", "rgb", None),
+])
+def test_map_points_match_the_world_round_trip(platform, modality, rect_mode):
+    """p_base = (T_wb T_body_base)^-1 T_wb T_BS p_c with the rig extrinsics; the body pose cancels."""
+    rig = get_rig(platform, modality, rect_mode)
+    rng = np.random.default_rng(3)
+    positions = rng.normal(scale=5.0, size=(6, 3))
+    A = rng.normal(size=(6, 3, 3))
+    covariances = A @ A.transpose(0, 2, 1)
+    m = new_map()
+    push_stereo_points(m, 1_000, rig.T_BS, positions.tolist(), covariances.tolist(), [[1, 2, 3]] * 6)
+    points = map_points_from_map(m, rig.T_body_base)
+
+    T_world_base = T_WB @ pp.SE3(rig.T_body_base.tensor().reshape(7))
+    T_world_camera = T_WB @ pp.SE3(rig.T_BS.tensor().reshape(7))
+    p_world = T_world_camera.matrix().numpy() @ np.vstack([positions.T, np.ones(6)])
+    expected = (np.linalg.inv(T_world_base.matrix().numpy()) @ p_world)[:3].T
+    np.testing.assert_allclose(points.values[:, :3], expected, atol=1e-4)
+    R = (T_world_base.Inv() @ T_world_camera).rotation().matrix().numpy()
+    np.testing.assert_allclose(points.values[:, 6:].reshape(-1, 3, 3), R @ covariances @ R.T, rtol=1e-5, atol=1e-5)
+
+
+def test_only_the_newest_stereo_node_points_are_returned():
+    m = new_map()
+    T_BS = pp.SE3(torch.tensor([0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 1.0], dtype=torch.float64))
+    push_stereo_points(m, 1_000, T_BS, [[1.0, 0.0, 0.0]] * 3, [SIGMA_C] * 3, [[0, 0, 0]] * 3)
+    push_stereo_points(m, 2_000, T_BS, [[2.0, 0.0, 0.0]] * 2, [SIGMA_C] * 2, [[0, 0, 0]] * 2)
+    points = map_points_from_map(m, YAMAHA_T_BODY_BASE)
+    assert points.stamp_ns == 2_000 and points.values.shape == (2, 15)
+    np.testing.assert_allclose(points.values[:, 0], 2.0 - 0.508, atol=1e-6)
+
+    push_stereo_points(m, 3_000, T_BS, [], [], [])
+    empty = map_points_from_map(m, YAMAHA_T_BODY_BASE)
+    assert empty.stamp_ns == 3_000 and empty.values.shape == (0, 15)
+
+
+def test_processed_image_is_channel_zero_quantized():
+    image = torch.zeros(1, 3, 2, 3)
+    image[0, 0] = torch.tensor([[0.0, 0.5, 1.0], [-0.1, 1.2, 0.999]])
+    image[0, 1:] = 0.7
+    out = processed_image(image)
+    assert out.dtype == np.uint8 and out.shape == (2, 3)
+    np.testing.assert_array_equal(out, [[0, 127, 255], [0, 255, 254]])
+
+
+def quaternion_matrix(xyzw: np.ndarray) -> np.ndarray:
+    return pp.SO3(torch.tensor(xyzw, dtype=torch.float64)).matrix().numpy()
+
+
+@pytest.mark.parametrize("platform", ["yamaha", "stallion"])
+def test_rect_rotation_is_raw_from_rectified(platform):
+    rig = get_rig(platform, "thermal", "stereo_rect")
+    R_raw_rect = quaternion_matrix(rect_rotation(rig))
+    R1 = rig.undistort[0].R
+    np.testing.assert_allclose(R_raw_rect, R1.T, atol=1e-12)
+    # A ray along the rectified optical axis, seen from the raw camera
+    np.testing.assert_allclose(R_raw_rect @ [0.0, 0.0, 1.0], R1[2], atol=1e-12)
+
+
+def test_rect_rotation_reproduces_the_yamaha_rectified_extrinsic():
+    """Body <- rect NED = Body <- raw NED @ (raw <- rect, moved from optical to NED axes)."""
+    rig = get_rig("yamaha", "thermal", "stereo_rect")
+    R_raw_rect = R_OPTICAL_NED.T @ quaternion_matrix(rect_rotation(rig)) @ R_OPTICAL_NED
+    expected = rig.T_BS_ref.rotation().matrix().numpy()[0] @ R_raw_rect
+    np.testing.assert_allclose(rig.T_BS.rotation().matrix().numpy()[0], expected, atol=1e-9)
+
+
+def test_stallion_rect_frame_is_the_driver_optical_frame():
+    """The bag's left_camera_optical_frame -> left_camera_frame (raw) static TF is the inverse of ours."""
+    rig = get_rig("stallion", "thermal", "stereo_rect")
+    q_bag = np.array([0.00044, 0.00065, -0.00128, 1.0])
+    R_optical_raw = quaternion_matrix(q_bag / np.linalg.norm(q_bag))
+    np.testing.assert_allclose(quaternion_matrix(rect_rotation(rig)) @ R_optical_raw, np.eye(3), atol=2e-5)
+
+
+def test_rect_rotation_needs_a_rectifying_rig():
+    with pytest.raises(ValueError, match="no rectification"):
+        rect_rotation(get_rig("yamaha", "rgb"))

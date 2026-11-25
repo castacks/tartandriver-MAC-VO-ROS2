@@ -1,4 +1,4 @@
-"""Plain odometry record shared by the MACVIO core, the localization gate and the ROS shells."""
+"""Plain records shared by the MACVIO core, the localization gate and the ROS shells."""
 
 from __future__ import annotations
 
@@ -21,3 +21,17 @@ class OdometryState:
     twist: np.ndarray      # (6,) vx vy vz wx wy wz
     twist_cov: np.ndarray  # (6, 6)
     twist_from_poses: bool = False  # twist is a finite difference of body poses
+
+
+MAP_POINT_FIELDS = ("x", "y", "z", "r", "g", "b", *(f"cov_{i}" for i in range(1, 10)))
+
+
+@dataclass(frozen=True, kw_only=True)
+class MapPoints:
+    """One frame's new map points in the base frame; `values` columns follow `MAP_POINT_FIELDS`.
+
+    Colors are 0-255; `cov_1..cov_9` is the row-major 3x3 position covariance [m^2].
+    """
+
+    stamp_ns: int
+    values: np.ndarray  # (N, 15) float32

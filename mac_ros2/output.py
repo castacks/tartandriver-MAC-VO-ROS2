@@ -1,4 +1,4 @@
-"""Read the newest MACVIO estimate: base-frame odometry and the per-frame state summary."""
+"""Read the newest MACVIO estimate: base-frame odometry, map points, processed image and the frame summary."""
 
 from __future__ import annotations
 
@@ -11,13 +11,48 @@ import torch
 from . import _macslam  # noqa: F401
 from Src.Utility.Enum import BodyNodeStatus  # noqa: E402
 
-from .odometry_state import OdometryState
+from .odometry_state import MapPoints, OdometryState
 from .vio_state import FrameResult
 
 if TYPE_CHECKING:
+    from Src.DataLoader import StereoRig
     from Src.Module.IMU.IMUChain import VIOStatus
     from Src.Module.Map import StereoVisualInertialMap
     from Src.Odometry.MACVIO import MACVIO
+
+
+def map_points_from_map(map: StereoVisualInertialMap, T_body_base: pp.LieTensor) -> MapPoints:
+    """Map points of the newest stereo node, moved from its camera (NED) frame to the base frame."""
+    stereo_idx = torch.tensor([len(map.stereo) - 1])
+    point_idx = map.stereo2map.neighbors(stereo_idx)
+    T_body_camera = pp.SE3(map.stereo.data["T_BS"][stereo_idx].reshape(7).double())
+    T_base_camera = pp.SE3(T_body_base.tensor().reshape(7).double()).Inv() @ T_body_camera
+    R = T_base_camera.rotation().matrix()
+
+    points = map.map.data["pos_Tc"][point_idx].detach().cpu().double()
+    covariances = map.map.data["cov_Tc"][point_idx].detach().cpu().double()
+    colors = map.map.data["color"][point_idx].detach().cpu().double()
+    values = torch.cat([
+        points @ R.mT + T_base_camera.translation(),
+        colors,
+        (R @ covariances @ R.mT).reshape(-1, 9),
+    ], dim=1)
+    return MapPoints(stamp_ns=int(map.stereo.data["time_ns"][stereo_idx].item()),
+                     values=values.to(torch.float32).numpy())
+
+
+def processed_image(image: torch.Tensor) -> np.ndarray:
+    """Channel 0 of a preprocessed 1x3xHxW [0, 1] image as HxW mono8, quantized like map point colors."""
+    return (image[0, 0].clamp(0.0, 1.0) * 255).to(torch.uint8).cpu().numpy()
+
+
+def rect_rotation(rig: StereoRig) -> np.ndarray:
+    """Raw left optical <- rectified left optical rotation as (x, y, z, w)."""
+    if rig.undistort is None:
+        raise ValueError(f"the {rig.platform} {rig.modality} rig takes rectified input and has no rectification")
+    # OpenCV R1 is rectified <- raw optical
+    R_raw_rect = torch.tensor(rig.undistort[0].R, dtype=torch.float64).mT
+    return pp.mat2SO3(R_raw_rect).tensor().numpy()
 
 
 def odometry_from_map(
