@@ -20,7 +20,8 @@ from mac_ros2.image_decode import decode_compressed, decode_image
 from mac_ros2.imu_buffer import IMUBuffer
 from mac_ros2.macvio_profile import MacvioProfile, load_profile
 from mac_ros2.macvio_runner import FrameBuilder, load_experiment
-from Src.DataLoader import SIFrameData, SequenceBase, get_rig, smart_transform
+from Src.DataLoader import SIFrameData, SequenceBase, smart_transform
+from Src.DataLoader.Dataset.OffroadRig import get_rig
 
 FRAMES = 6
 IMU_LOOKAHEAD_NS = 1_000_000_000

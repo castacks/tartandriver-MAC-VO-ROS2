@@ -15,11 +15,10 @@ import numpy as np
 import torch
 
 from . import _macslam  # noqa: F401
-from Src.DataLoader import (  # noqa: E402
-    IDataTransform, IMUData, SIFrameData, StereoData, StereoFrameData, StereoRig, get_rig,
-)
-from Src.Odometry.MACVIO import MACVIO  # noqa: E402
-from Src.Utility.Config import load_config  # noqa: E402
+from Src.DataLoader import IDataTransform, IMUData, SIFrameData, StereoData, StereoFrameData
+from Src.DataLoader.Dataset.OffroadRig import StereoRig, get_rig
+from Src.Odometry.MACVIO import MACVIO
+from Src.Utility.Config import load_config
 
 from .imu_buffer import IMUBuffer
 from .macvio_profile import MacvioProfile

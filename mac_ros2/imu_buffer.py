@@ -12,9 +12,9 @@ import pypose as pp
 import torch
 
 from . import _macslam  # noqa: F401
-from Src.DataLoader import IMUData  # noqa: E402
-from Src.DataLoader.IMUWindow import imu_window  # noqa: E402
-from Src.Utility.Math.IMUMath import noise_density_to_sample_covariance  # noqa: E402
+from Src.DataLoader import IMUData
+from Src.DataLoader.IMUWindow import imu_window
+from Src.Utility.Math.IMUMath import noise_density_to_sample_covariance
 
 class IMUSpecLike(Protocol):
     """IMU noise model and gap bracket of one rig; the body frame is the IMU frame."""

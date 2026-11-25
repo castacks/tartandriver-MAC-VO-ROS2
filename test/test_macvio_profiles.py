@@ -10,7 +10,7 @@ import yaml
 
 from mac_ros2.macvio_profile import PROFILE_DIR, load_profile, parse_profile
 from mac_ros2.macvio_runner import load_experiment, split_preprocess
-from Src.DataLoader import get_rig
+from Src.DataLoader.Dataset.OffroadRig import get_rig
 
 PROFILES = ("yamaha_thermal", "yamaha_rgb", "stallion_thermal", "stallion_rgb")
 EXPERIMENTS = {

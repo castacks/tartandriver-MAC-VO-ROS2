@@ -11,8 +11,8 @@ import torch
 
 from mac_ros2.odometry_state import MAP_POINT_FIELDS
 from mac_ros2.output import _camera_gap_fields, map_points_from_map, odometry_from_map, processed_image, rect_rotation
-from Src.DataLoader import get_rig
-from Src.DataLoader.Rig import R_OPTICAL_NED
+from Src.DataLoader.Dataset.OffroadRig import get_rig
+from Src.DataLoader.Dataset.OffroadRig import R_OPTICAL_NED
 from Src.Module.Map import IMUNode, PointNode, StereoNode
 from Src.Scripts.AutoTest.imu_dropout_fixtures import new_map, push_body
 

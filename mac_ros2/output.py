@@ -9,13 +9,13 @@ import pypose as pp
 import torch
 
 from . import _macslam  # noqa: F401
-from Src.Utility.Enum import BodyNodeStatus  # noqa: E402
+from Src.Utility.Enum import BodyNodeStatus
 
 from .odometry_state import MapPoints, OdometryState
 from .vio_state import FrameResult
 
 if TYPE_CHECKING:
-    from Src.DataLoader import StereoRig
+    from Src.DataLoader.Dataset.OffroadRig import StereoRig
     from Src.Module.IMU.IMUChain import VIOStatus
     from Src.Module.Map import StereoVisualInertialMap
     from Src.Odometry.MACVIO import MACVIO
