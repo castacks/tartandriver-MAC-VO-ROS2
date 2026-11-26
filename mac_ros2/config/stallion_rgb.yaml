@@ -1,15 +1,15 @@
-# Stallion RGB: driver-rectified PNG mono8 pair; topics resolve under the crl_rzr namespace
+# Stallion RGB: driver-rectified raw mono8 pair (playback decompresses the bag); topics resolve under the crl_rzr namespace
 # Estimator: the Yamaha RGB tuning until a Stallion one exists
 platform: stallion
 modality: rgb
 rect_mode: null
 macslam_config: Config/Experiment/MACVIO/Offroad/VIO_MACI2_FR_Yamaha_RGB.yaml
-image_transport: compressed
+image_transport: raw
 publish_processed_image: false
 
 topics:
-  image_left: multisense_front/left/image_rect/compressed
-  image_right: multisense_front/right/image_rect/compressed
+  image_left: multisense_front/left/image_rect
+  image_right: multisense_front/right/image_rect
   imu: microstrain/nav/filtered_imu/data
   odometry: macvio/odometry_raw
   status: macvio/status

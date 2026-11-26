@@ -328,17 +328,17 @@ def test_macvio_node_shell_wiring(macvio_node):
     runner = node.runner
     assert runner.started and runner.profile.name == "stallion_thermal"
     topics = {s.topic_name for s in node.subscriptions}
-    assert {"/microstrain/nav/filtered_imu/data", "/multisense_thermal_front/left/image_mono/compressed",
-            "/multisense_thermal_front/right/image_mono/compressed"} <= topics
+    assert {"/microstrain/nav/filtered_imu/data", "/multisense_thermal_front/left/image_mono",
+            "/multisense_thermal_front/right/image_mono"} <= topics
 
     imu = Imu()
     imu.header.stamp = ns_to_stamp(42)
     node._on_imu(imu)
     image = RNG.integers(0, 65535, size=(4, 6), dtype=np.uint16)
-    left = CompressedImage(data=cv2.imencode(".png", image)[1].tobytes())
+    left = Image(height=4, width=6, encoding="mono16", step=image.strides[0], data=image.tobytes())
     left.header.stamp = ns_to_stamp(1_000)
     node._on_stereo(left, left)
-    node._on_stereo(CompressedImage(data=b"junk"), left)
+    node._on_stereo(Image(height=4, width=6, encoding="mono16", step=12, data=b"junk"), left)
     node._tick()
     kinds = [kind for kind, _ in runner.calls]
     assert kinds == ["imu", "stereo", "bad", "tick"]

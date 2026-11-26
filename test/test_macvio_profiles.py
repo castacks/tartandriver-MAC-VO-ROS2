@@ -42,8 +42,8 @@ def test_profile_by_path_equals_profile_by_name():
 @pytest.mark.parametrize("name,base,transport", [
     ("yamaha_thermal", "vehicle", "raw"),
     ("yamaha_rgb", "vehicle", "raw"),
-    ("stallion_thermal", "crl_rzr/base_link", "compressed"),
-    ("stallion_rgb", "crl_rzr/base_link", "compressed"),
+    ("stallion_thermal", "crl_rzr/base_link", "raw"),
+    ("stallion_rgb", "crl_rzr/base_link", "raw"),
 ])
 def test_platform_frames_and_transport(name, base, transport):
     profile = load_profile(name)
@@ -54,8 +54,8 @@ def test_topics_are_relative_and_match_the_bags():
     topics = {name: load_profile(name).topics for name in PROFILES}
     assert topics["yamaha_thermal"].image_left == "thermal_left/image"
     assert topics["yamaha_rgb"].image_right == "multisense/right/image_rect"
-    assert topics["stallion_thermal"].image_left == "multisense_thermal_front/left/image_mono/compressed"
-    assert topics["stallion_rgb"].image_right == "multisense_front/right/image_rect/compressed"
+    assert topics["stallion_thermal"].image_left == "multisense_thermal_front/left/image_mono"
+    assert topics["stallion_rgb"].image_right == "multisense_front/right/image_rect"
     assert {t.imu for t in topics.values()} == {"novatel/imu/data", "microstrain/nav/filtered_imu/data"}
     for t in topics.values():
         assert (t.odometry, t.status, t.map_points) == ("macvio/odometry_raw", "macvio/status", "macvio/map_points")
