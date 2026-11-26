@@ -1,4 +1,5 @@
 import os
+from glob import glob
 from setuptools import find_packages, setup
 
 package_name = 'mac_ros2'
@@ -19,6 +20,8 @@ setup(
     data_files=[
         ('share/ament_index/resource_index/packages', ['resource/' + package_name]),
         ('share/' + package_name, ['package.xml']),
+        ('share/' + package_name + '/launch', glob('launch/*.launch.py')),
+        ('share/' + package_name + '/config', glob('mac_ros2/config/*.yaml')),
         # ('share/' + package_name + "/mac_slam/Model", ['Model/MACVO_FrontendCov.pth', 'Model/MACVO_posenet.pkl'])
     ],
     package_data={package_name: extra_files},
@@ -32,6 +35,8 @@ setup(
     entry_points={
         'console_scripts': [
             'MACVO = mac_ros2.MACVO:main',
+            'MACVIO = mac_ros2.macvio_node:main',
+            'localization_adapter = mac_ros2.localization_adapter_node:main',
         ],
     },
 )

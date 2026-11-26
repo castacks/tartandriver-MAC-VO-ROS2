@@ -1,3 +1,4 @@
+# Legacy MACVO (MACVO_torch) config. Kept for reference only
 Common:
   device: &device cuda
 
